@@ -30,9 +30,11 @@ dependencies {
     }
 
     // Alibaba DashScope SDK
-    implementation("com.alibaba:dashscope-sdk-java:2.19.4")
+    implementation("com.alibaba:dashscope-sdk-java:2.19.4") {
+        exclude(group = "org.slf4j", module = "slf4j-api")
+    }
 
-    // Apache PDFBox with proper version and dependencies
+    // Apache PDFBox with proper version
     implementation("org.apache.pdfbox:pdfbox:3.0.0") {
         exclude(group = "commons-logging", module = "commons-logging")
     }
@@ -44,17 +46,13 @@ dependencies {
     implementation("org.apache.poi:poi-ooxml:5.2.4")
     implementation("org.apache.poi:poi-scratchpad:5.2.4")
 
-    // Required for PDFBox to work properly
+    // Required for PDFBox
     implementation("org.apache.commons:commons-lang3:3.13.0")
     implementation("org.bouncycastle:bcprov-jdk18on:1.76")
     implementation("org.bouncycastle:bcpkix-jdk18on:1.76")
 
     // JSON processing
     implementation("com.google.code.gson:gson:2.10.1")
-
-    // Logging
-    implementation("org.slf4j:slf4j-api:2.0.17")
-    implementation("org.slf4j:slf4j-simple:2.0.17")
 
     // Testing
     testImplementation("junit:junit:4.13.2")

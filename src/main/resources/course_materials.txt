@@ -1,6 +1,5 @@
 # Course Materials List
 # List all PDF and document files in the course_materials directory
-# One file per line
 
 Lec-00-Introduction.pdf
 Lec-01-Introduction-to-Java.pdf

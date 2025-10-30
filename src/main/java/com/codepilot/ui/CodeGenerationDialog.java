@@ -4,7 +4,6 @@ import com.codepilot.service.LLMService;
 import com.codepilot.util.CodeCleanupUtil;
 import com.codepilot.util.PromptLoader;
 import com.codepilot.util.StreamingOutputHandler;
-import com.intellij.openapi.application.ApplicationManager;
 import com.intellij.openapi.command.WriteCommandAction;
 import com.intellij.openapi.editor.Document;
 import com.intellij.openapi.editor.Editor;

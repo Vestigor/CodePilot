@@ -4,9 +4,11 @@ import com.alibaba.dashscope.embeddings.TextEmbedding;
 import com.alibaba.dashscope.embeddings.TextEmbeddingParam;
 import com.alibaba.dashscope.embeddings.TextEmbeddingResult;
 import com.alibaba.dashscope.embeddings.TextEmbeddingResultItem;
-import com.codepilot.model.DocumentChunk;
+import com.codepilot.model.KnowledgeEntry;
 import com.codepilot.util.ConfigManager;
+import com.codepilot.util.KnowledgeBaseLoader;
 import com.intellij.openapi.application.ApplicationManager;
+import com.intellij.openapi.application.PathManager;
 import com.intellij.openapi.components.Service;
 import com.intellij.openapi.diagnostic.Logger;
 import com.intellij.openapi.project.Project;
@@ -15,16 +17,21 @@ import java.util.*;
 import java.util.concurrent.ConcurrentHashMap;
 import java.util.stream.Collectors;
 
+/**
+ * Improved Vector Store Service with persistent embeddings
+ * Inspired by com.tongji.jea's embedding approach
+ */
 @Service(Service.Level.PROJECT)
 public final class VectorStoreService {
     private static final Logger LOG = Logger.getInstance(VectorStoreService.class);
     private final Project project;
     private final ConfigManager configManager;
-    private final List<DocumentChunk> chunks;
+    private final List<KnowledgeEntry> knowledgeEntries;
     private final Map<String, List<Double>> embeddingCache;
     private TextEmbedding textEmbedding;
+    private static final String PLUGIN_DATA_PATH = PathManager.getPluginsPath() + "/CodePilot/data";
 
-    // 相似度阈值常量
+    // Similarity thresholds
     private static final double MIN_SIMILARITY_THRESHOLD = 0.3;
     private static final double DEFAULT_SIMILARITY_THRESHOLD = 0.5;
     private static final double HIGH_SIMILARITY_THRESHOLD = 0.7;
@@ -32,7 +39,7 @@ public final class VectorStoreService {
     public VectorStoreService(Project project) {
         this.project = project;
         this.configManager = ApplicationManager.getApplication().getService(ConfigManager.class);
-        this.chunks = new ArrayList<>();
+        this.knowledgeEntries = new ArrayList<>();
         this.embeddingCache = new ConcurrentHashMap<>();
         initializeEmbeddingService();
     }
@@ -40,8 +47,9 @@ public final class VectorStoreService {
     private void initializeEmbeddingService() {
         try {
             textEmbedding = new TextEmbedding();
+            LOG.info("Text embedding service initialized");
         } catch (Exception e) {
-            LOG.warn("Failed to initialize embedding service, using fallback: " + e.getMessage());
+            LOG.warn("Failed to initialize embedding service: " + e.getMessage());
         }
     }
 
@@ -49,112 +57,143 @@ public final class VectorStoreService {
         return project.getService(VectorStoreService.class);
     }
 
-    public void indexChunks(List<DocumentChunk> documentChunks) {
-        chunks.clear();
-        chunks.addAll(documentChunks);
+    /**
+     * Index knowledge entries with embeddings
+     * If entries already have embeddings, use them; otherwise generate new ones
+     */
+    public void indexKnowledgeEntries(List<KnowledgeEntry> entries) {
+        knowledgeEntries.clear();
+        knowledgeEntries.addAll(entries);
 
-        // 批量生成嵌入向量
-        int batchSize = 25; // 通义千问的批量限制
-        for (int i = 0; i < chunks.size(); i += batchSize) {
-            int end = Math.min(i + batchSize, chunks.size());
-            List<DocumentChunk> batch = chunks.subList(i, end);
+        // Check which entries need embeddings
+        List<KnowledgeEntry> entriesNeedingEmbeddings = entries.stream()
+                .filter(e -> e.getEmbedding() == null || e.getEmbedding().isEmpty())
+                .collect(Collectors.toList());
+
+        if (entriesNeedingEmbeddings.isEmpty()) {
+            LOG.info("All " + entries.size() + " entries already have embeddings");
+            return;
+        }
+
+        LOG.info("Generating embeddings for " + entriesNeedingEmbeddings.size() + " entries");
+
+        // Generate embeddings in batches
+        int batchSize = 25; // Dashscope limit
+        for (int i = 0; i < entriesNeedingEmbeddings.size(); i += batchSize) {
+            int end = Math.min(i + batchSize, entriesNeedingEmbeddings.size());
+            List<KnowledgeEntry> batch = entriesNeedingEmbeddings.subList(i, end);
 
             try {
                 generateBatchEmbeddings(batch);
-                LOG.info("Indexed batch " + (i/batchSize + 1) + "/" +
-                        ((chunks.size() + batchSize - 1) / batchSize));
+                LOG.info("Generated embeddings for batch " + (i/batchSize + 1));
             } catch (Exception e) {
                 LOG.warn("Failed to generate embeddings for batch, using fallback: " + e.getMessage());
-                // 使用备用方法
-                for (DocumentChunk chunk : batch) {
-                    double[] embedding = generateFallbackEmbedding(chunk.getContent());
-                    chunk.setEmbedding(embedding);
+                // Use fallback for this batch
+                for (KnowledgeEntry entry : batch) {
+                    List<Double> embedding = generateFallbackEmbedding(entry.getContent());
+                    entry.setEmbedding(embedding);
                 }
             }
         }
 
-        LOG.info("Indexed " + chunks.size() + " chunks with embeddings");
+        // Save updated entries with embeddings
+        KnowledgeBaseLoader.saveToFile(knowledgeEntries, PLUGIN_DATA_PATH);
+        LOG.info("Indexed and saved " + knowledgeEntries.size() + " knowledge entries");
     }
 
-    private void generateBatchEmbeddings(List<DocumentChunk> batch) throws Exception {
+    /**
+     * Generate embeddings for a batch of entries
+     */
+    private void generateBatchEmbeddings(List<KnowledgeEntry> batch) throws Exception {
         if (textEmbedding == null || configManager.getApiKey() == null ||
                 configManager.getApiKey().isEmpty()) {
             throw new Exception("Embedding service not available");
         }
 
         List<String> texts = batch.stream()
-                .map(DocumentChunk::getContent)
+                .map(KnowledgeEntry::getContent)
                 .collect(Collectors.toList());
 
         TextEmbeddingParam param = TextEmbeddingParam.builder()
                 .apiKey(configManager.getApiKey())
-                .model("text-embedding-v2") // 使用通义千问的嵌入模型
+                .model(configManager.getCurrentModelConfig().getName().equals("text-embedding-v2")
+                        ? "text-embedding-v2" : "text-embedding-v2")
                 .texts(texts)
                 .build();
 
         TextEmbeddingResult result = textEmbedding.call(param);
-
         List<TextEmbeddingResultItem> embeddings = result.getOutput().getEmbeddings();
 
         for (int i = 0; i < batch.size() && i < embeddings.size(); i++) {
-            List<Double> embeddingList = embeddings.get(i).getEmbedding();
-            double[] embeddingArray = embeddingList.stream()
-                    .mapToDouble(Double::doubleValue)
-                    .toArray();
-            batch.get(i).setEmbedding(embeddingArray);
+            List<Double> embedding = embeddings.get(i).getEmbedding();
+            batch.get(i).setEmbedding(embedding);
 
-            // 缓存嵌入向量
-            embeddingCache.put(batch.get(i).getContent(), embeddingList);
+            // Cache the embedding
+            embeddingCache.put(batch.get(i).getChunkId(), embedding);
         }
     }
 
-    public List<DocumentChunk> search(String query, int topK) {
-        if (chunks.isEmpty()) {
+    /**
+     * Search for relevant knowledge entries
+     */
+    public List<KnowledgeEntry> search(String query, int topK) {
+        if (knowledgeEntries.isEmpty()) {
+            LOG.warn("No knowledge entries to search");
             return new ArrayList<>();
         }
 
-        // 生成查询向量
-        double[] queryVector = generateQueryEmbedding(query);
+        // Generate query embedding
+        List<Double> queryEmbedding = generateQueryEmbedding(query);
 
-        // 计算相似度并排序
-        List<DocumentChunk> scoredChunks = new ArrayList<>();
-        for (DocumentChunk chunk : chunks) {
-            double[] chunkVector = chunk.getEmbedding();
-            if (chunkVector == null) {
-                chunkVector = generateFallbackEmbedding(chunk.getContent());
-                chunk.setEmbedding(chunkVector);
+        // Calculate similarities and create result entries
+        List<KnowledgeSearchResult> searchResults = new ArrayList<>();
+
+        for (KnowledgeEntry entry : knowledgeEntries) {
+            List<Double> entryEmbedding = entry.getEmbedding();
+
+            if (entryEmbedding == null || entryEmbedding.isEmpty()) {
+                LOG.warn("Entry " + entry.getChunkId() + " has no embedding");
+                continue;
             }
 
-            double similarity = cosineSimilarity(queryVector, chunkVector);
-            chunk.setSimilarity(similarity);
+            double similarity = cosineSimilarity(queryEmbedding, entryEmbedding);
 
-            // 只添加有最小相关性的块
+            // Only include results above minimum threshold
             if (similarity > MIN_SIMILARITY_THRESHOLD) {
-                scoredChunks.add(chunk);
+                searchResults.add(new KnowledgeSearchResult(entry, similarity));
             }
         }
 
-        // 按相似度排序并返回前K个
-        return scoredChunks.stream()
-                .sorted((a, b) -> Double.compare(b.getSimilarity(), a.getSimilarity()))
+        // Sort by similarity and return top K
+        return searchResults.stream()
+                .sorted((a, b) -> Double.compare(b.similarity, a.similarity))
                 .limit(Math.min(topK, configManager.getMaxRetrievalResults()))
+                .map(result -> {
+                    // Create a copy with similarity score
+                    KnowledgeEntry entry = new KnowledgeEntry(
+                            result.entry.getChunkId(),
+                            result.entry.getContent(),
+                            result.entry.getSource(),
+                            result.entry.getPage(),
+                            result.entry.getDocumentType()
+                    );
+                    entry.setEmbedding(result.entry.getEmbedding());
+                    // Store similarity in a transient field or as part of the entry
+                    return entry;
+                })
                 .collect(Collectors.toList());
     }
 
     /**
-     * 带有相似度阈值的搜索
+     * Generate embedding for query text
      */
-    public List<DocumentChunk> searchWithThreshold(String query, int topK, double threshold) {
-        List<DocumentChunk> results = search(query, topK);
-
-        // 过滤低于阈值的结果
-        return results.stream()
-                .filter(chunk -> chunk.getSimilarity() >= threshold)
-                .collect(Collectors.toList());
-    }
-
-    private double[] generateQueryEmbedding(String query) {
+    private List<Double> generateQueryEmbedding(String query) {
         try {
+            // Check cache first
+            if (embeddingCache.containsKey(query)) {
+                return embeddingCache.get(query);
+            }
+
             if (textEmbedding != null && configManager.getApiKey() != null &&
                     !configManager.getApiKey().isEmpty()) {
 
@@ -167,9 +206,10 @@ public final class VectorStoreService {
                 TextEmbeddingResult result = textEmbedding.call(param);
                 List<Double> embedding = result.getOutput().getEmbeddings().get(0).getEmbedding();
 
-                return embedding.stream()
-                        .mapToDouble(Double::doubleValue)
-                        .toArray();
+                // Cache the result
+                embeddingCache.put(query, embedding);
+
+                return embedding;
             }
         } catch (Exception e) {
             LOG.warn("Failed to generate query embedding, using fallback: " + e.getMessage());
@@ -178,98 +218,105 @@ public final class VectorStoreService {
         return generateFallbackEmbedding(query);
     }
 
-    private double[] generateFallbackEmbedding(String text) {
-        // TF-IDF向量化实现
+    /**
+     * Fallback embedding generation using TF-IDF
+     */
+    private List<Double> generateFallbackEmbedding(String text) {
+        // Simple TF-IDF based embedding
         String normalizedText = text.toLowerCase()
                 .replaceAll("[^a-zA-Z0-9\\u4e00-\\u9fa5\\s]", " ")
                 .trim();
 
         String[] words = normalizedText.split("\\s+");
 
-        // 创建词频向量
+        // Create word frequency map
         Map<String, Double> tfidf = new HashMap<>();
         Map<String, Integer> wordFreq = new HashMap<>();
 
-        // 计算词频
         for (String word : words) {
-            if (word.length() > 1) { // 忽略单字符
+            if (word.length() > 1) {
                 wordFreq.put(word, wordFreq.getOrDefault(word, 0) + 1);
             }
         }
 
-        // 计算TF-IDF
+        // Calculate TF-IDF
         int totalWords = Math.max(words.length, 1);
         for (Map.Entry<String, Integer> entry : wordFreq.entrySet()) {
             double tf = (double) entry.getValue() / totalWords;
-            // 简化的IDF计算
-            double idf = Math.log(1 + (double) chunks.size() /
+            double idf = Math.log(1 + (double) knowledgeEntries.size() /
                     (1 + countDocumentsContaining(entry.getKey())));
             tfidf.put(entry.getKey(), tf * idf);
         }
 
-        // 转换为固定长度向量（使用哈希技巧）
-        int vectorSize = 1536; // 匹配通义千问嵌入维度
-        double[] vector = new double[vectorSize];
+        // Convert to fixed-length vector using hash trick
+        int vectorSize = 1536; // Match OpenAI/DashScope embedding size
+        List<Double> vector = new ArrayList<>(Collections.nCopies(vectorSize, 0.0));
 
         for (Map.Entry<String, Double> entry : tfidf.entrySet()) {
-            // 使用多个哈希函数来减少冲突
             int hash1 = Math.abs(entry.getKey().hashCode()) % vectorSize;
             int hash2 = Math.abs(entry.getKey().hashCode() * 31) % vectorSize;
             int hash3 = Math.abs(entry.getKey().hashCode() * 37) % vectorSize;
 
             double value = entry.getValue();
-            vector[hash1] += value;
-            vector[hash2] += value * 0.5;
-            vector[hash3] += value * 0.25;
+            vector.set(hash1, vector.get(hash1) + value);
+            vector.set(hash2, vector.get(hash2) + value * 0.5);
+            vector.set(hash3, vector.get(hash3) + value * 0.25);
         }
 
-        // 归一化
+        // Normalize
         return normalizeVector(vector);
     }
 
+    /**
+     * Count documents containing a word
+     */
     private int countDocumentsContaining(String word) {
-        int count = 0;
         String lowerWord = word.toLowerCase();
-        for (DocumentChunk chunk : chunks) {
-            if (chunk.getContent().toLowerCase().contains(lowerWord)) {
-                count++;
-            }
-        }
-        return count;
+        return (int) knowledgeEntries.stream()
+                .filter(entry -> entry.getContent().toLowerCase().contains(lowerWord))
+                .count();
     }
 
-    private double[] normalizeVector(double[] vector) {
+    /**
+     * Normalize vector
+     */
+    private List<Double> normalizeVector(List<Double> vector) {
         double norm = 0;
-        for (double v : vector) {
+        for (Double v : vector) {
             norm += v * v;
         }
         norm = Math.sqrt(norm);
 
         if (norm > 0) {
-            for (int i = 0; i < vector.length; i++) {
-                vector[i] /= norm;
+            for (int i = 0; i < vector.size(); i++) {
+                vector.set(i, vector.get(i) / norm);
             }
         }
 
         return vector;
     }
 
-    private double cosineSimilarity(double[] vec1, double[] vec2) {
-        if (vec1.length != vec2.length) {
-            // 如果维度不匹配，调整到相同维度
-            int minLen = Math.min(vec1.length, vec2.length);
-            vec1 = Arrays.copyOf(vec1, minLen);
-            vec2 = Arrays.copyOf(vec2, minLen);
+    /**
+     * Calculate cosine similarity between two embeddings
+     */
+    private double cosineSimilarity(List<Double> vec1, List<Double> vec2) {
+        if (vec1.size() != vec2.size()) {
+            LOG.warn("Vector size mismatch: " + vec1.size() + " vs " + vec2.size());
+            int minSize = Math.min(vec1.size(), vec2.size());
+            vec1 = vec1.subList(0, minSize);
+            vec2 = vec2.subList(0, minSize);
         }
 
         double dotProduct = 0.0;
         double norm1 = 0.0;
         double norm2 = 0.0;
 
-        for (int i = 0; i < vec1.length; i++) {
-            dotProduct += vec1[i] * vec2[i];
-            norm1 += vec1[i] * vec1[i];
-            norm2 += vec2[i] * vec2[i];
+        for (int i = 0; i < vec1.size(); i++) {
+            double v1 = vec1.get(i);
+            double v2 = vec2.get(i);
+            dotProduct += v1 * v2;
+            norm1 += v1 * v1;
+            norm2 += v2 * v2;
         }
 
         if (norm1 == 0 || norm2 == 0) {
@@ -278,31 +325,43 @@ public final class VectorStoreService {
 
         double similarity = dotProduct / (Math.sqrt(norm1) * Math.sqrt(norm2));
 
-        // 确保相似度在[0, 1]范围内
+        // Ensure similarity is in [0, 1]
         return Math.max(0.0, Math.min(1.0, similarity));
     }
 
     /**
-     * 获取与查询最相关的块及其相似度
+     * Get the number of indexed entries
      */
-    public Map<String, Double> getTopSimilarities(String query, int topK) {
-        List<DocumentChunk> results = search(query, topK);
-        Map<String, Double> similarities = new LinkedHashMap<>();
-
-        for (DocumentChunk chunk : results) {
-            String key = chunk.getSource() + " - " +
-                    chunk.getContent().substring(0, Math.min(50, chunk.getContent().length()));
-            similarities.put(key, chunk.getSimilarity());
-        }
-
-        return similarities;
+    public int getEntryCount() {
+        return knowledgeEntries.size();
     }
 
-    public int getChunkCount() {
-        return chunks.size();
-    }
-
+    /**
+     * Clear all caches
+     */
     public void clearCache() {
         embeddingCache.clear();
+        knowledgeEntries.clear();
+    }
+
+    /**
+     * Force reindex all entries
+     */
+    public void reindexAll() {
+        clearCache();
+        // Will need to reload from document processor
+    }
+
+    /**
+     * Internal class for search results
+     */
+    private static class KnowledgeSearchResult {
+        final KnowledgeEntry entry;
+        final double similarity;
+
+        KnowledgeSearchResult(KnowledgeEntry entry, double similarity) {
+            this.entry = entry;
+            this.similarity = similarity;
+        }
     }
 }

@@ -1,8 +1,10 @@
 package com.codepilot.service;
 
-import com.codepilot.model.DocumentChunk;
+import com.codepilot.model.KnowledgeEntry;
 import com.codepilot.util.ConfigManager;
+import com.codepilot.util.KnowledgeBaseLoader;
 import com.intellij.openapi.application.ApplicationManager;
+import com.intellij.openapi.application.PathManager;
 import com.intellij.openapi.components.Service;
 import com.intellij.openapi.diagnostic.Logger;
 import com.intellij.openapi.project.Project;
@@ -18,12 +20,17 @@ import java.nio.file.*;
 import java.util.*;
 import java.util.concurrent.ConcurrentHashMap;
 
+/**
+ * Improved Document Processor with page-based chunking
+ * Inspired by com.tongji.jea's approach
+ */
 @Service(Service.Level.PROJECT)
 public final class DocumentProcessorService {
     private static final Logger LOG = Logger.getInstance(DocumentProcessorService.class);
     private final Project project;
     private final ConfigManager configManager;
-    private final Map<String, List<DocumentChunk>> documentCache = new ConcurrentHashMap<>();
+    private final Map<String, List<KnowledgeEntry>> documentCache = new ConcurrentHashMap<>();
+    private static final String PLUGIN_DATA_PATH = PathManager.getPluginsPath() + "/CodePilot/data";
 
     public DocumentProcessorService(Project project) {
         this.project = project;
@@ -34,26 +41,39 @@ public final class DocumentProcessorService {
         return project.getService(DocumentProcessorService.class);
     }
 
-    public List<DocumentChunk> processAllDocuments() {
-        List<DocumentChunk> allChunks = new ArrayList<>();
+    /**
+     * Process all documents with intelligent caching
+     */
+    public List<KnowledgeEntry> processAllDocuments() {
+        // Check if we have a cached knowledge base
+        if (KnowledgeBaseLoader.cacheExists(PLUGIN_DATA_PATH)) {
+            LOG.info("Loading knowledge base from cache");
+            List<KnowledgeEntry> cachedEntries = KnowledgeBaseLoader.loadFromFile(PLUGIN_DATA_PATH);
+            if (!cachedEntries.isEmpty()) {
+                LOG.info("Successfully loaded " + cachedEntries.size() + " entries from cache");
+                return cachedEntries;
+            }
+        }
+
+        // If no cache or cache is empty, process documents
+        LOG.info("Processing documents to build knowledge base");
+        List<KnowledgeEntry> allEntries = new ArrayList<>();
         String materialsPath = configManager.getCourseMaterialsPath();
 
-        System.out.println("=== 开始加载课程材料 ===");
-
         try {
-            // 读取文件列表
+            // Get list of course materials
             InputStream listStream = getClass().getClassLoader()
                     .getResourceAsStream("course_materials.txt");
 
             if (listStream == null) {
-                System.err.println("❌ 未找到课程材料列表文件");
-                // 尝试直接读取course_materials目录
+                LOG.warn("course_materials.txt not found, trying direct approach");
                 return processDocumentsDirectly(materialsPath);
             }
 
             BufferedReader reader = new BufferedReader(new InputStreamReader(listStream));
             List<String> fileNames = new ArrayList<>();
             String line;
+
             while ((line = reader.readLine()) != null) {
                 line = line.trim();
                 if (!line.isEmpty() && !line.startsWith("#")) {
@@ -62,77 +82,315 @@ public final class DocumentProcessorService {
             }
             reader.close();
 
-            System.out.println("📁 找到 " + fileNames.size() + " 个文件\n");
+            LOG.info("Found " + fileNames.size() + " files to process");
 
-            // 处理每个文件
+            // Process each file
             for (String fileName : fileNames) {
                 String filePath = materialsPath + "/" + fileName;
-                System.out.println("\n处理文件: " + filePath);
+                LOG.info("Processing: " + fileName);
 
                 try {
-                    // 先检查缓存
-                    if (documentCache.containsKey(fileName)) {
-                        List<DocumentChunk> cachedChunks = documentCache.get(fileName);
-                        allChunks.addAll(cachedChunks);
-                        System.out.println("✓ " + fileName + " - 从缓存加载 " + cachedChunks.size() + " 个文档块");
-                        continue;
-                    }
-
-                    // 使用 getResourceAsStream 读取单个文件
                     InputStream is = getClass().getClassLoader().getResourceAsStream(filePath);
-
                     if (is == null) {
-                        System.err.println("✗ 文件不存在: " + filePath);
+                        LOG.warn("File not found: " + filePath);
                         continue;
                     }
 
-                    // 创建临时文件来处理
-                    String extension = getFileExtension(fileName);
-                    File tempFile = File.createTempFile("course_", "." + extension);
-                    tempFile.deleteOnExit();
+                    // Create temp file for processing
+                    File tempFile = createTempFile(is, fileName);
 
-                    // 将 InputStream 写入临时文件
-                    try (FileOutputStream fos = new FileOutputStream(tempFile)) {
-                        byte[] buffer = new byte[8192];
-                        int bytesRead;
-                        while ((bytesRead = is.read(buffer)) != -1) {
-                            fos.write(buffer, 0, bytesRead);
-                        }
+                    // Process based on file type
+                    List<KnowledgeEntry> entries = processDocument(tempFile, fileName);
+
+                    if (!entries.isEmpty()) {
+                        allEntries.addAll(entries);
+                        LOG.info("Extracted " + entries.size() + " entries from " + fileName);
                     }
-                    is.close();
 
-                    // 处理临时文件
-                    List<DocumentChunk> chunks = processDocument(tempFile, fileName);
-
-                    if (!chunks.isEmpty()) {
-                        documentCache.put(fileName, chunks);
-                        allChunks.addAll(chunks);
-                        System.out.println("✓ " + fileName + " - 生成 " + chunks.size() + " 个文档块");
-                    } else {
-                        System.out.println("⚠ " + fileName + " - 未能提取内容");
-                    }
+                    // Clean up temp file
+                    tempFile.delete();
 
                 } catch (Exception e) {
-                    System.err.println("✗ 处理文件失败: " + filePath);
-                    LOG.error("Error processing file: " + filePath, e);
+                    LOG.error("Failed to process " + fileName, e);
                 }
             }
 
+            // Save to cache for next time
+            if (!allEntries.isEmpty()) {
+                KnowledgeBaseLoader.saveToFile(allEntries, PLUGIN_DATA_PATH);
+            }
+
         } catch (Exception e) {
-            System.err.println("❌ 加载课程材料失败: " + e.getMessage());
-            LOG.error("Failed to load course materials", e);
+            LOG.error("Failed to process documents", e);
         }
 
-        System.out.println("\n=== 课程材料加载完成 ===");
-        System.out.println("总计加载 " + allChunks.size() + " 个文档块");
-
-        return allChunks;
+        LOG.info("Total knowledge entries created: " + allEntries.size());
+        return allEntries;
     }
 
-    private List<DocumentChunk> processDocumentsDirectly(String materialsPath) {
-        List<DocumentChunk> chunks = new ArrayList<>();
+    /**
+     * Process a single document into knowledge entries (one per page)
+     */
+    private List<KnowledgeEntry> processDocument(File file, String fileName) {
+        String extension = getFileExtension(fileName);
 
-        // 资源目录中的文件
+        try {
+            switch (extension.toLowerCase()) {
+                case "pdf":
+                    return processPDFByPage(file, fileName);
+                case "docx":
+                    return processDOCXByPage(file, fileName);
+                case "txt":
+                    return processTXTByPage(file, fileName);
+                case "pptx":
+                    return processPPTXBySlide(file, fileName);
+                default:
+                    LOG.warn("Unsupported file type: " + extension);
+                    return new ArrayList<>();
+            }
+        } catch (Exception e) {
+            LOG.error("Failed to process " + fileName, e);
+            return new ArrayList<>();
+        }
+    }
+
+    /**
+     * Process PDF file - one entry per page
+     */
+    private List<KnowledgeEntry> processPDFByPage(File file, String fileName) throws IOException {
+        List<KnowledgeEntry> entries = new ArrayList<>();
+
+        try (PDDocument document = Loader.loadPDF(file)) {
+            PDFTextStripper stripper = new PDFTextStripper();
+            int totalPages = document.getNumberOfPages();
+
+            for (int pageNum = 1; pageNum <= totalPages; pageNum++) {
+                try {
+                    // Extract text from single page
+                    stripper.setStartPage(pageNum);
+                    stripper.setEndPage(pageNum);
+                    String pageText = stripper.getText(document);
+
+                    if (pageText != null && !pageText.trim().isEmpty()) {
+                        // Clean the text
+                        pageText = cleanText(pageText);
+
+                        // Create knowledge entry for this page
+                        String chunkId = KnowledgeEntry.generateChunkId(fileName, pageNum, 1);
+                        KnowledgeEntry entry = new KnowledgeEntry(
+                                chunkId,
+                                pageText,
+                                fileName,
+                                pageNum,
+                                "pdf"
+                        );
+                        entries.add(entry);
+                    }
+                } catch (Exception e) {
+                    LOG.warn("Failed to extract page " + pageNum + " from " + fileName, e);
+                }
+            }
+        }
+
+        LOG.info("Extracted " + entries.size() + " pages from PDF: " + fileName);
+        return entries;
+    }
+
+    /**
+     * Process DOCX file - chunk by logical sections
+     */
+    private List<KnowledgeEntry> processDOCXByPage(File file, String fileName) throws IOException {
+        List<KnowledgeEntry> entries = new ArrayList<>();
+
+        try (FileInputStream fis = new FileInputStream(file);
+             XWPFDocument document = new XWPFDocument(fis)) {
+
+            StringBuilder pageContent = new StringBuilder();
+            int pageNumber = 1;
+            int paragraphCount = 0;
+            final int PARAGRAPHS_PER_PAGE = 20; // Approximate page size
+
+            for (XWPFParagraph paragraph : document.getParagraphs()) {
+                String text = paragraph.getText();
+                if (text != null && !text.trim().isEmpty()) {
+                    pageContent.append(text).append("\n\n");
+                    paragraphCount++;
+
+                    // When we have enough content for a "page"
+                    if (paragraphCount >= PARAGRAPHS_PER_PAGE) {
+                        String content = cleanText(pageContent.toString());
+                        if (!content.isEmpty()) {
+                            String chunkId = KnowledgeEntry.generateChunkId(fileName, pageNumber, 1);
+                            KnowledgeEntry entry = new KnowledgeEntry(
+                                    chunkId,
+                                    content,
+                                    fileName,
+                                    pageNumber,
+                                    "docx"
+                            );
+                            entries.add(entry);
+                        }
+
+                        pageContent.setLength(0);
+                        paragraphCount = 0;
+                        pageNumber++;
+                    }
+                }
+            }
+
+            // Add remaining content
+            if (pageContent.length() > 0) {
+                String content = cleanText(pageContent.toString());
+                if (!content.isEmpty()) {
+                    String chunkId = KnowledgeEntry.generateChunkId(fileName, pageNumber, 1);
+                    KnowledgeEntry entry = new KnowledgeEntry(
+                            chunkId,
+                            content,
+                            fileName,
+                            pageNumber,
+                            "docx"
+                    );
+                    entries.add(entry);
+                }
+            }
+        }
+
+        LOG.info("Extracted " + entries.size() + " sections from DOCX: " + fileName);
+        return entries;
+    }
+
+    /**
+     * Process PPTX file - one entry per slide
+     */
+    private List<KnowledgeEntry> processPPTXBySlide(File file, String fileName) throws IOException {
+        List<KnowledgeEntry> entries = new ArrayList<>();
+
+        try (FileInputStream fis = new FileInputStream(file);
+             XMLSlideShow ppt = new XMLSlideShow(fis)) {
+
+            List<XSLFSlide> slides = ppt.getSlides();
+
+            for (int i = 0; i < slides.size(); i++) {
+                XSLFSlide slide = slides.get(i);
+                StringBuilder slideContent = new StringBuilder();
+                int slideNumber = i + 1;
+
+                // Extract text from all shapes in the slide
+                for (XSLFShape shape : slide.getShapes()) {
+                    if (shape instanceof XSLFTextShape) {
+                        XSLFTextShape textShape = (XSLFTextShape) shape;
+                        String text = textShape.getText();
+                        if (text != null && !text.trim().isEmpty()) {
+                            slideContent.append(text).append("\n");
+                        }
+                    }
+                }
+
+                String content = cleanText(slideContent.toString());
+                if (!content.isEmpty()) {
+                    String chunkId = KnowledgeEntry.generateChunkId(fileName, slideNumber, 1);
+                    KnowledgeEntry entry = new KnowledgeEntry(
+                            chunkId,
+                            content,
+                            fileName,
+                            slideNumber,
+                            "pptx"
+                    );
+                    entries.add(entry);
+                }
+            }
+        }
+
+        LOG.info("Extracted " + entries.size() + " slides from PPTX: " + fileName);
+        return entries;
+    }
+
+    /**
+     * Process TXT file - chunk by size
+     */
+    private List<KnowledgeEntry> processTXTByPage(File file, String fileName) throws IOException {
+        List<KnowledgeEntry> entries = new ArrayList<>();
+        String content = Files.readString(file.toPath());
+
+        // Split by lines and create chunks
+        String[] lines = content.split("\n");
+        final int LINES_PER_PAGE = 50;
+
+        StringBuilder pageContent = new StringBuilder();
+        int pageNumber = 1;
+        int lineCount = 0;
+
+        for (String line : lines) {
+            pageContent.append(line).append("\n");
+            lineCount++;
+
+            if (lineCount >= LINES_PER_PAGE) {
+                String pageText = cleanText(pageContent.toString());
+                if (!pageText.isEmpty()) {
+                    String chunkId = KnowledgeEntry.generateChunkId(fileName, pageNumber, 1);
+                    KnowledgeEntry entry = new KnowledgeEntry(
+                            chunkId,
+                            pageText,
+                            fileName,
+                            pageNumber,
+                            "txt"
+                    );
+                    entries.add(entry);
+                }
+
+                pageContent.setLength(0);
+                lineCount = 0;
+                pageNumber++;
+            }
+        }
+
+        // Add remaining content
+        if (pageContent.length() > 0) {
+            String pageText = cleanText(pageContent.toString());
+            if (!pageText.isEmpty()) {
+                String chunkId = KnowledgeEntry.generateChunkId(fileName, pageNumber, 1);
+                KnowledgeEntry entry = new KnowledgeEntry(
+                        chunkId,
+                        pageText,
+                        fileName,
+                        pageNumber,
+                        "txt"
+                );
+                entries.add(entry);
+            }
+        }
+
+        LOG.info("Extracted " + entries.size() + " pages from TXT: " + fileName);
+        return entries;
+    }
+
+    /**
+     * Clean text content
+     */
+    private String cleanText(String text) {
+        if (text == null) return "";
+
+        // Remove excessive whitespace
+        text = text.replaceAll("\\s+", " ");
+
+        // Remove control characters
+        text = text.replaceAll("[\\p{Cntrl}&&[^\t\n\r]]", "");
+
+        // Normalize line breaks
+        text = text.replaceAll("\\r\\n|\\r", "\n");
+
+        // Trim
+        text = text.trim();
+
+        return text;
+    }
+
+    /**
+     * Process documents directly from resources
+     */
+    private List<KnowledgeEntry> processDocumentsDirectly(String materialsPath) {
+        List<KnowledgeEntry> entries = new ArrayList<>();
+
         String[] knownFiles = {
                 "Lec-00-Introduction.pdf",
                 "Lec-01-Introduction-to-Java.pdf",
@@ -151,18 +409,27 @@ public final class DocumentProcessorService {
                 InputStream is = getClass().getClassLoader().getResourceAsStream(filePath);
                 if (is != null) {
                     File tempFile = createTempFile(is, fileName);
-                    List<DocumentChunk> fileChunks = processDocument(tempFile, fileName);
-                    chunks.addAll(fileChunks);
-                    System.out.println("✓ 处理文件: " + fileName + " - " + fileChunks.size() + " 个块");
+                    List<KnowledgeEntry> fileEntries = processDocument(tempFile, fileName);
+                    entries.addAll(fileEntries);
+                    tempFile.delete();
+                    LOG.info("Processed " + fileName + ": " + fileEntries.size() + " entries");
                 }
             } catch (Exception e) {
-                LOG.error("Failed to process file: " + fileName, e);
+                LOG.error("Failed to process " + fileName, e);
             }
         }
 
-        return chunks;
+        // Save to cache
+        if (!entries.isEmpty()) {
+            KnowledgeBaseLoader.saveToFile(entries, PLUGIN_DATA_PATH);
+        }
+
+        return entries;
     }
 
+    /**
+     * Create temporary file from input stream
+     */
     private File createTempFile(InputStream is, String fileName) throws IOException {
         String extension = getFileExtension(fileName);
         File tempFile = File.createTempFile("course_", "." + extension);
@@ -180,249 +447,9 @@ public final class DocumentProcessorService {
         return tempFile;
     }
 
-    private List<DocumentChunk> processDocument(File file, String originalFileName) {
-        String extension = getFileExtension(originalFileName);
-
-        try {
-            switch (extension.toLowerCase()) {
-                case "pdf":
-                    return processPDF(file, originalFileName);
-                case "docx":
-                    return processDOCX(file, originalFileName);
-                case "txt":
-                    return processTXT(file, originalFileName);
-                case "pptx":
-                    return processPPTX(file, originalFileName);
-                default:
-                    LOG.warn("Unsupported file type: " + extension);
-                    return new ArrayList<>();
-            }
-        } catch (Exception e) {
-            LOG.error("Failed to process " + originalFileName, e);
-            // 尝试作为文本文件处理
-            try {
-                return processTXT(file, originalFileName);
-            } catch (Exception fallbackError) {
-                LOG.error("Fallback processing also failed for " + originalFileName, fallbackError);
-                return new ArrayList<>();
-            }
-        }
-    }
-
-    private List<DocumentChunk> processPDF(File file, String originalFileName) throws IOException {
-        List<DocumentChunk> chunks = new ArrayList<>();
-
-        try {
-            // 使用PDFBox 3.0的新加载方式
-            PDDocument document = Loader.loadPDF(file);
-
-            try {
-                PDFTextStripper stripper = new PDFTextStripper();
-                int totalPages = document.getNumberOfPages();
-
-                // 如果页数太多，分批处理
-                int batchSize = 10;
-                for (int startPage = 1; startPage <= totalPages; startPage += batchSize) {
-                    int endPage = Math.min(startPage + batchSize - 1, totalPages);
-
-                    stripper.setStartPage(startPage);
-                    stripper.setEndPage(endPage);
-
-                    try {
-                        String batchText = stripper.getText(document);
-
-                        // 按页分割内容
-                        String[] pageTexts = batchText.split("\\f"); // Form feed character often separates pages
-
-                        for (int i = 0; i < pageTexts.length; i++) {
-                            String pageText = pageTexts[i].trim();
-                            if (!pageText.isEmpty()) {
-                                List<String> pageChunks = splitIntoChunks(pageText);
-                                for (String chunkText : pageChunks) {
-                                    chunks.add(new DocumentChunk(chunkText, originalFileName, startPage + i));
-                                }
-                            }
-                        }
-                    } catch (Exception e) {
-                        LOG.warn("Failed to extract text from pages " + startPage + "-" + endPage + " in " + originalFileName, e);
-                    }
-                }
-            } finally {
-                document.close();
-            }
-        } catch (Exception e) {
-            LOG.error("PDF processing failed for " + originalFileName, e);
-            // 创建一个占位符块
-            chunks.add(new DocumentChunk(
-                    "PDF文件 " + originalFileName + " 的内容无法提取，可能包含图片或特殊格式。",
-                    originalFileName,
-                    1
-            ));
-        }
-
-        return chunks;
-    }
-
-    private List<DocumentChunk> processDOCX(File file, String originalFileName) throws IOException {
-        List<DocumentChunk> chunks = new ArrayList<>();
-
-        try (FileInputStream fis = new FileInputStream(file);
-             XWPFDocument document = new XWPFDocument(fis)) {
-
-            StringBuilder pageContent = new StringBuilder();
-            int pageNumber = 1;
-            int paragraphCount = 0;
-
-            for (XWPFParagraph paragraph : document.getParagraphs()) {
-                String text = paragraph.getText();
-                if (text != null && !text.trim().isEmpty()) {
-                    pageContent.append(text).append("\n");
-                    paragraphCount++;
-
-                    // 每20段作为一页
-                    if (paragraphCount >= 20) {
-                        List<String> pageChunks = splitIntoChunks(pageContent.toString());
-                        for (String chunkText : pageChunks) {
-                            chunks.add(new DocumentChunk(chunkText, originalFileName, pageNumber));
-                        }
-
-                        pageContent.setLength(0);
-                        paragraphCount = 0;
-                        pageNumber++;
-                    }
-                }
-            }
-
-            // 处理剩余内容
-            if (pageContent.length() > 0) {
-                List<String> pageChunks = splitIntoChunks(pageContent.toString());
-                for (String chunkText : pageChunks) {
-                    chunks.add(new DocumentChunk(chunkText, originalFileName, pageNumber));
-                }
-            }
-        } catch (Exception e) {
-            LOG.error("DOCX processing failed for " + originalFileName, e);
-            chunks.add(new DocumentChunk(
-                    "Word文档 " + originalFileName + " 的内容无法提取。",
-                    originalFileName,
-                    1
-            ));
-        }
-
-        return chunks;
-    }
-
-    private List<DocumentChunk> processTXT(File file, String originalFileName) throws IOException {
-        List<DocumentChunk> chunks = new ArrayList<>();
-
-        try {
-            String content = new String(Files.readAllBytes(file.toPath()));
-            List<String> textChunks = splitIntoChunks(content);
-            int chunkIndex = 1;
-            for (String chunkText : textChunks) {
-                chunks.add(new DocumentChunk(chunkText, originalFileName, chunkIndex++));
-            }
-        } catch (Exception e) {
-            LOG.error("TXT processing failed for " + originalFileName, e);
-            chunks.add(new DocumentChunk(
-                    "文本文件 " + originalFileName + " 的内容无法提取。",
-                    originalFileName,
-                    1
-            ));
-        }
-
-        return chunks;
-    }
-
-    private List<DocumentChunk> processPPTX(File file, String originalFileName) throws IOException {
-        List<DocumentChunk> chunks = new ArrayList<>();
-
-        try (FileInputStream fis = new FileInputStream(file);
-             XMLSlideShow ppt = new XMLSlideShow(fis)) {
-
-            List<XSLFSlide> slides = ppt.getSlides();
-            int slideNumber = 1;
-
-            for (XSLFSlide slide : slides) {
-                StringBuilder slideContent = new StringBuilder();
-
-                for (XSLFShape shape : slide.getShapes()) {
-                    if (shape instanceof XSLFTextShape) {
-                        XSLFTextShape textShape = (XSLFTextShape) shape;
-                        String text = textShape.getText();
-                        if (text != null && !text.trim().isEmpty()) {
-                            slideContent.append(text).append("\n");
-                        }
-                    }
-                }
-
-                String content = slideContent.toString();
-                if (!content.trim().isEmpty()) {
-                    List<String> slideChunks = splitIntoChunks(content);
-                    for (String chunkText : slideChunks) {
-                        chunks.add(new DocumentChunk(chunkText, originalFileName, slideNumber));
-                    }
-                }
-
-                slideNumber++;
-            }
-        } catch (Exception e) {
-            LOG.error("PPTX processing failed for " + originalFileName, e);
-            chunks.add(new DocumentChunk(
-                    "PPT文件 " + originalFileName + " 的内容无法提取。",
-                    originalFileName,
-                    1
-            ));
-        }
-
-        return chunks;
-    }
-
-    private List<String> splitIntoChunks(String text) {
-        List<String> chunks = new ArrayList<>();
-        int chunkSize = configManager.getChunkSize();
-        int overlap = configManager.getChunkOverlap();
-
-        String cleanText = text.replaceAll("\\s+", " ").trim();
-
-        if (cleanText.length() <= chunkSize) {
-            if (!cleanText.isEmpty()) {
-                chunks.add(cleanText);
-            }
-            return chunks;
-        }
-
-        int start = 0;
-        while (start < cleanText.length()) {
-            int end = Math.min(start + chunkSize, cleanText.length());
-
-            // 尝试在句子边界处分割
-            if (end < cleanText.length()) {
-                int lastPeriod = cleanText.lastIndexOf('。', end);
-                int lastExclamation = cleanText.lastIndexOf('！', end);
-                int lastQuestion = cleanText.lastIndexOf('？', end);
-                int lastDot = cleanText.lastIndexOf('.', end);
-                int lastNewline = cleanText.lastIndexOf('\n', end);
-
-                int boundary = Math.max(Math.max(Math.max(lastPeriod, lastExclamation),
-                        Math.max(lastQuestion, lastDot)), lastNewline);
-
-                if (boundary > start && boundary < end) {
-                    end = boundary + 1;
-                }
-            }
-
-            String chunk = cleanText.substring(start, end).trim();
-            if (!chunk.isEmpty()) {
-                chunks.add(chunk);
-            }
-
-            start = Math.max(start + 1, end - overlap);
-        }
-
-        return chunks;
-    }
-
+    /**
+     * Get file extension
+     */
     private String getFileExtension(String fileName) {
         int lastDot = fileName.lastIndexOf('.');
         if (lastDot > 0 && lastDot < fileName.length() - 1) {
@@ -431,7 +458,19 @@ public final class DocumentProcessorService {
         return "";
     }
 
+    /**
+     * Clear all caches
+     */
     public void clearCache() {
         documentCache.clear();
+        KnowledgeBaseLoader.clearCache(PLUGIN_DATA_PATH);
+    }
+
+    /**
+     * Force reprocess all documents
+     */
+    public List<KnowledgeEntry> reprocessAllDocuments() {
+        clearCache();
+        return processAllDocuments();
     }
 }

@@ -14,10 +14,8 @@ import com.intellij.openapi.diagnostic.Logger;
 import com.intellij.openapi.project.Project;
 import io.reactivex.Flowable;
 
-import java.util.ArrayList;
 import java.util.Arrays;
 import java.util.List;
-import java.util.function.Consumer;
 
 @Service(Service.Level.PROJECT)
 public final class LLMService {
