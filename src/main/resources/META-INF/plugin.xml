@@ -1,0 +1,60 @@
+<!-- Plugin Configuration File. Read more: https://plugins.jetbrains.com/docs/intellij/plugin-configuration-file.html -->
+<idea-plugin>
+    <id>com.codepilot</id>
+    <name>CodePilot</name>
+    <vendor>CodePilot Team</vendor>
+    <description>AI Teaching Assistant for Java Enterprise Application Development</description>
+
+    <depends>com.intellij.modules.platform</depends>
+    <depends>com.intellij.modules.java</depends>
+    <depends>Git4Idea</depends>
+
+    <extensions defaultExtensionNs="com.intellij">
+        <!-- 工具窗口 -->
+        <toolWindow id="CodePilot"
+                    secondary="true"
+                    icon="/icons/codepilot.svg"
+                    anchor="right"
+                    factoryClass="com.codepilot.ui.CodePilotToolWindowFactory"/>
+
+        <!-- 项目启动活动 -->
+        <postStartupActivity implementation="com.codepilot.CodePilotPlugin$ProjectStartupActivity"/>
+    </extensions>
+
+    <actions>
+        <!-- 编辑器右键菜单 -->
+        <group id="CodePilot.EditorPopupMenu"
+               text="CodePilot"
+               popup="true">
+            <add-to-group group-id="EditorPopupMenu" anchor="last"/>
+
+            <action id="CodePilot.AskAboutCode"
+                    class="com.codepilot.actions.AskAboutCodeAction"
+                    text="询问项目代码"
+                    description="向CodePilot提问选中的代码"
+                    icon="/icons/codepilot.svg"/>
+
+            <action id="CodePilot.GenerateUnitTest"
+                    class="com.codepilot.actions.GenerateUnitTestAction"
+                    text="生成单元测试"
+                    description="为选中的类或方法生成单元测试"
+                    icon="/icons/codepilot.svg"/>
+
+            <action id="CodePilot.GenerateCode"
+                    class="com.codepilot.actions.GenerateCodeAction"
+                    text="根据描述生成代码"
+                    description="根据需求描述生成代码"
+                    icon="/icons/codepilot.svg"/>
+        </group>
+
+        <!-- VCS菜单 -->
+        <action id="CodePilot.GenerateCommitMessage"
+                class="com.codepilot.actions.GenerateCommitMessageAction"
+                text="生成提交消息"
+                description="根据代码变更生成Git提交消息"
+                icon="/icons/codepilot.svg">
+            <add-to-group group-id="Vcs.MessageActionGroup" anchor="first"/>
+        </action>
+    </actions>
+</idea-plugin>
+

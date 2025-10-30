@@ -1,0 +1,139 @@
+package com.codepilot.service;
+
+import com.alibaba.dashscope.aigc.generation.Generation;
+import com.alibaba.dashscope.aigc.generation.GenerationParam;
+import com.alibaba.dashscope.aigc.generation.GenerationResult;
+import com.alibaba.dashscope.common.Message;
+import com.alibaba.dashscope.common.Role;
+import com.codepilot.model.ModelConfig;
+import com.codepilot.util.ConfigManager;
+import com.codepilot.util.StreamingOutputHandler;
+import com.intellij.openapi.application.ApplicationManager;
+import com.intellij.openapi.components.Service;
+import com.intellij.openapi.diagnostic.Logger;
+import com.intellij.openapi.project.Project;
+import io.reactivex.Flowable;
+
+import java.util.ArrayList;
+import java.util.Arrays;
+import java.util.List;
+import java.util.function.Consumer;
+
+@Service(Service.Level.PROJECT)
+public final class LLMService {
+    private static final Logger LOG = Logger.getInstance(LLMService.class);
+    private final Project project;
+    private final ConfigManager configManager;
+
+    public LLMService(Project project) {
+        this.project = project;
+        this.configManager = ApplicationManager.getApplication().getService(ConfigManager.class);
+    }
+
+    public static LLMService getInstance(Project project) {
+        return project.getService(LLMService.class);
+    }
+
+    public void generateStreamingResponse(String prompt, StreamingOutputHandler handler) {
+        try {
+            Generation gen = new Generation();
+            Message userMsg = Message.builder()
+                    .role(Role.USER.getValue())
+                    .content(prompt)
+                    .build();
+
+            ModelConfig modelConfig = configManager.getCurrentModelConfig();
+            GenerationParam param = GenerationParam.builder()
+                    .apiKey(configManager.getApiKey())
+                    .model(modelConfig.getName())
+                    .incrementalOutput(true)
+                    .resultFormat("message")
+                    .messages(Arrays.asList(userMsg))
+                    .build();
+
+            Flowable<GenerationResult> result = gen.streamCall(param);
+            result.blockingForEach(message -> {
+                if (handler.isCancelled()) {
+                    return;
+                }
+
+                String content = message.getOutput()
+                        .getChoices()
+                        .get(0)
+                        .getMessage()
+                        .getContent();
+
+                if (content != null && !content.isEmpty()) {
+                    handler.appendToken(content);
+                }
+            });
+        } catch (Exception e) {
+            LOG.error("Failed to generate streaming response", e);
+            handler.appendLine("\n[错误] 生成回复失败: " + e.getMessage());
+        }
+    }
+
+    public String generateResponse(String prompt) {
+        try {
+            Generation gen = new Generation();
+            Message userMsg = Message.builder()
+                    .role(Role.USER.getValue())
+                    .content(prompt)
+                    .build();
+
+            ModelConfig modelConfig = configManager.getCurrentModelConfig();
+            GenerationParam param = GenerationParam.builder()
+                    .apiKey(configManager.getApiKey())
+                    .model(modelConfig.getName())
+                    .resultFormat("message")
+                    .messages(Arrays.asList(userMsg))
+                    .build();
+
+            GenerationResult result = gen.call(param);
+            return result.getOutput()
+                    .getChoices()
+                    .get(0)
+                    .getMessage()
+                    .getContent();
+        } catch (Exception e) {
+            LOG.error("Failed to generate response", e);
+            return "[错误] 生成回复失败: " + e.getMessage();
+        }
+    }
+
+    public void generateResponseWithHistory(List<Message> messages,
+                                            StreamingOutputHandler handler) {
+        try {
+            Generation gen = new Generation();
+            ModelConfig modelConfig = configManager.getCurrentModelConfig();
+
+            GenerationParam param = GenerationParam.builder()
+                    .apiKey(configManager.getApiKey())
+                    .model(modelConfig.getName())
+                    .incrementalOutput(true)
+                    .resultFormat("message")
+                    .messages(messages)
+                    .build();
+
+            Flowable<GenerationResult> result = gen.streamCall(param);
+            result.blockingForEach(message -> {
+                if (handler.isCancelled()) {
+                    return;
+                }
+
+                String content = message.getOutput()
+                        .getChoices()
+                        .get(0)
+                        .getMessage()
+                        .getContent();
+
+                if (content != null && !content.isEmpty()) {
+                    handler.appendToken(content);
+                }
+            });
+        } catch (Exception e) {
+            LOG.error("Failed to generate response with history", e);
+            handler.appendLine("\n[错误] 生成回复失败: " + e.getMessage());
+        }
+    }
+}

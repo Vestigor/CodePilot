@@ -1,0 +1,35 @@
+{
+  "defaultApiKey": "sk-8518802f51d34d7693a109c27189b364",
+  "userApiKey": "",
+  "selectedModel": "qwen-plus",
+  "courseMaterialsPath": "course_materials",
+  "chunkSize": 500,
+  "chunkOverlap": 50,
+  "maxRetrievalResults": 3,
+  "models": [
+    {
+      "name": "qwen-plus",
+      "displayName": "通义千问 Plus",
+      "baseUrl": "https://dashscope.aliyuncs.com/compatible-mode/v1",
+      "supportsStreaming": true
+    },
+    {
+      "name": "deepseek-v3.2-exp",
+      "displayName": "DeepSeek V3.2",
+      "baseUrl": "https://dashscope.aliyuncs.com/compatible-mode/v1",
+      "supportsStreaming": true
+    },
+    {
+      "name": "Moonshot-Kimi-K2-Instruct",
+      "displayName": "Kimi K2",
+      "baseUrl": "https://dashscope.aliyuncs.com/compatible-mode/v1",
+      "supportsStreaming": true
+    },
+    {
+      "name": "glm-4.6",
+      "displayName": "GLM-4.6",
+      "baseUrl": "https://dashscope.aliyuncs.com/compatible-mode/v1",
+      "supportsStreaming": true
+    }
+  ]
+}
