@@ -23,6 +23,9 @@ public final class RAGService {
     private final ConfigManager configManager;
     private boolean isInitialized = false;
 
+    // 相似度阈值，低于此值的检索结果将被忽略
+    private static final double SIMILARITY_THRESHOLD = 0.5;
+
     public RAGService(Project project) {
         this.project = project;
         this.documentProcessor = DocumentProcessorService.getInstance(project);
@@ -62,14 +65,34 @@ public final class RAGService {
         List<DocumentChunk> relevantChunks = vectorStore.search(question,
                 configManager.getMaxRetrievalResults());
 
+        // 过滤出真正相关的文档（相似度高于阈值）
+        List<DocumentChunk> actuallyRelevantChunks = relevantChunks.stream()
+                .filter(chunk -> chunk.getSimilarity() > SIMILARITY_THRESHOLD)
+                .collect(Collectors.toList());
+
         List<String> sources = new ArrayList<>();
         StringBuilder context = new StringBuilder();
+        boolean hasRelevantMaterial = !actuallyRelevantChunks.isEmpty();
 
-        if (!relevantChunks.isEmpty()) {
-            for (DocumentChunk chunk : relevantChunks) {
+        if (hasRelevantMaterial) {
+            // 有相关材料，构建上下文
+            for (DocumentChunk chunk : actuallyRelevantChunks) {
+                context.append("【来源：").append(chunk.getSource()).append("】\n");
                 context.append(chunk.getContent()).append("\n\n");
-                sources.add(chunk.getSource());
+
+                // 收集唯一的来源
+                String source = chunk.getSource();
+                if (!sources.contains(source)) {
+                    sources.add(source);
+                }
             }
+
+            LOG.info("Found " + actuallyRelevantChunks.size() +
+                    " relevant chunks with similarity > " + SIMILARITY_THRESHOLD);
+        } else {
+            // 没有相关材料，使用通用知识回答
+            LOG.info("No relevant chunks found with similarity > " + SIMILARITY_THRESHOLD +
+                    ". Will answer based on general knowledge.");
         }
 
         // 构建提示词
@@ -77,7 +100,9 @@ public final class RAGService {
         variables.put("context", context.toString());
         variables.put("question", question);
 
-        String prompt = PromptLoader.formatPrompt("qa_prompt", variables);
+        // 根据是否有相关材料选择不同的提示模板
+        String promptName = hasRelevantMaterial ? "qa_prompt" : "qa_general_prompt";
+        String prompt = PromptLoader.formatPrompt(promptName, variables);
 
         // 生成回答
         llmService.generateStreamingResponse(prompt, new StreamingOutputHandler(null) {
@@ -88,15 +113,17 @@ public final class RAGService {
         });
 
         // 添加引用来源
-        handler.appendLine("\n\n【参考来源】");
-        if (!sources.isEmpty()) {
+        handler.appendLine("\n\n【参考来源】\n");
+        if (hasRelevantMaterial) {
+            // 有相关材料时，列出具体来源
             for (String source : sources) {
                 handler.appendLine("- " + source);
             }
         } else {
+            // 没有相关材料时，明确说明
             handler.appendLine("本回答基于通识知识，未引用课程资料");
         }
-        handler.appendLine("\n\n");
+        handler.appendLine("\n");
     }
 
     public ChatMessage answerQuestionSync(String question) {
@@ -108,13 +135,24 @@ public final class RAGService {
         List<DocumentChunk> relevantChunks = vectorStore.search(question,
                 configManager.getMaxRetrievalResults());
 
+        // 过滤出真正相关的文档（相似度高于阈值）
+        List<DocumentChunk> actuallyRelevantChunks = relevantChunks.stream()
+                .filter(chunk -> chunk.getSimilarity() > SIMILARITY_THRESHOLD)
+                .collect(Collectors.toList());
+
         List<String> sources = new ArrayList<>();
         StringBuilder context = new StringBuilder();
+        boolean hasRelevantMaterial = !actuallyRelevantChunks.isEmpty();
 
-        if (!relevantChunks.isEmpty()) {
-            for (DocumentChunk chunk : relevantChunks) {
+        if (hasRelevantMaterial) {
+            for (DocumentChunk chunk : actuallyRelevantChunks) {
+                context.append("【来源：").append(chunk.getSource()).append("】\n");
                 context.append(chunk.getContent()).append("\n\n");
-                sources.add(chunk.getSource());
+
+                String source = chunk.getSource();
+                if (!sources.contains(source)) {
+                    sources.add(source);
+                }
             }
         }
 
@@ -123,13 +161,16 @@ public final class RAGService {
         variables.put("context", context.toString());
         variables.put("question", question);
 
-        String prompt = PromptLoader.formatPrompt("qa_prompt", variables);
+        String promptName = hasRelevantMaterial ? "qa_prompt" : "qa_general_prompt";
+        String prompt = PromptLoader.formatPrompt(promptName, variables);
 
         // 生成回答
         String answer = llmService.generateResponse(prompt);
 
         ChatMessage response = new ChatMessage("CodePilot", answer);
-        if (!sources.isEmpty()) {
+
+        // 只有在真正有相关材料时才设置来源
+        if (hasRelevantMaterial) {
             response.setSources(sources);
         }
 
@@ -142,5 +183,21 @@ public final class RAGService {
 
     public int getIndexedChunkCount() {
         return vectorStore.getChunkCount();
+    }
+
+    /**
+     * 获取问题的相关性评分
+     */
+    public double getRelevanceScore(String question) {
+        if (!isInitialized) {
+            return 0.0;
+        }
+
+        List<DocumentChunk> chunks = vectorStore.search(question, 1);
+        if (chunks.isEmpty()) {
+            return 0.0;
+        }
+
+        return chunks.get(0).getSimilarity();
     }
 }

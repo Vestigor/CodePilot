@@ -1,13 +1,19 @@
-你是一个Git专家。请分析以下代码变更，生成符合Conventional Commits规范的提交消息。
+分析以下Git代码变更，生成规范的提交消息。
 
 代码变更：
 {diff}
 
-要求：
-1. 遵循格式：<type>(<scope>): <subject>
-2. type可以是：feat, fix, docs, style, refactor, test, chore等
-3. subject简洁明了，描述主要变更
-4. 如果变更较多，可以添加body部分详细说明
-5. 使用中文
+提交消息规范：
+- 格式：<type>(<scope>): <subject>
+- type类型：
+  * feat: 新功能
+  * fix: 修复bug
+  * docs: 文档更新
+  * style: 代码格式调整（不影响功能）
+  * refactor: 重构代码
+  * test: 测试相关
+  * chore: 构建或辅助工具的变更
+- subject：简洁描述主要变更（50字符以内）
+- 如果有多个变更，在正文部分详细说明
 
-请生成提交消息：
+直接输出提交消息，不要有其他说明文字：

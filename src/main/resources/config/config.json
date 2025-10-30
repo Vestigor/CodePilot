@@ -2,10 +2,17 @@
   "defaultApiKey": "sk-8518802f51d34d7693a109c27189b364",
   "userApiKey": "",
   "selectedModel": "qwen-plus",
+  "embeddingModel": "text-embedding-v2",
   "courseMaterialsPath": "course_materials",
-  "chunkSize": 500,
-  "chunkOverlap": 50,
-  "maxRetrievalResults": 3,
+  "chunkSize": 800,
+  "chunkOverlap": 100,
+  "maxRetrievalResults": 5,
+  "ragSettings": {
+    "similarityThreshold": 0.7,
+    "useHybridSearch": true,
+    "rerankResults": true,
+    "maxTokensPerChunk": 500
+  },
   "models": [
     {
       "name": "qwen-plus",

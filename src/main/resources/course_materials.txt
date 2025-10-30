@@ -1,0 +1,13 @@
+# Course Materials List
+# List all PDF and document files in the course_materials directory
+# One file per line
+
+Lec-00-Introduction.pdf
+Lec-01-Introduction-to-Java.pdf
+Lec-02-Variables-Operators-ControlFlowStatements-and-Arrays.pdf
+Lec-03-Numbers-and-Strings.pdf
+Lec-04-Classes-and-Objects.pdf
+Lec-05-Inheritance-and-Interfaces.pdf
+Lec-06-Exceptions.pdf
+Lec-07-Generics.pdf
+Lec-08-Annotations-and-Reflection.pdf

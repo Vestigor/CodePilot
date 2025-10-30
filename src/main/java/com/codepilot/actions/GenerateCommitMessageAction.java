@@ -1,6 +1,7 @@
 package com.codepilot.actions;
 
 import com.codepilot.service.LLMService;
+import com.codepilot.util.CodeCleanupUtil;
 import com.codepilot.util.PromptLoader;
 import com.intellij.openapi.actionSystem.ActionUpdateThread;
 import com.intellij.openapi.actionSystem.AnAction;
@@ -61,12 +62,14 @@ public class GenerateCommitMessageAction extends AnAction {
                     variables.put("diff", diff);
 
                     String prompt = PromptLoader.formatPrompt("commit_message_prompt", variables);
-                    String message = llmService.generateResponse(prompt);
+                    String rawMessage = llmService.generateResponse(prompt);
+
+                    // 清理生成的消息
+                    String message = CodeCleanupUtil.cleanCommitMessage(rawMessage);
 
                     // 设置提交消息或复制到剪贴板
                     ApplicationManager.getApplication().invokeLater(() -> {
                         if (commitMessageControl != null) {
-                            // 如果在提交对话框中，直接设置消息
                             commitMessageControl.setCommitMessage(message);
                             Messages.showInfoMessage(
                                     project,
@@ -74,7 +77,6 @@ public class GenerateCommitMessageAction extends AnAction {
                                     "成功"
                             );
                         } else {
-                            // 否则复制到剪贴板
                             CopyPasteManager.getInstance().setContents(new StringSelection(message));
                             Messages.showInfoMessage(
                                     project,
@@ -112,8 +114,12 @@ public class GenerateCommitMessageAction extends AnAction {
 
             StringBuilder diff = new StringBuilder();
             String line;
-            while ((line = reader.readLine()) != null) {
+            int lineCount = 0;
+            int maxLines = 500; // 限制diff大小
+
+            while ((line = reader.readLine()) != null && lineCount < maxLines) {
                 diff.append(line).append("\n");
+                lineCount++;
             }
 
             process.waitFor();

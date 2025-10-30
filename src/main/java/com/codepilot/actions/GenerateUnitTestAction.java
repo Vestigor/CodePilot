@@ -1,6 +1,7 @@
 package com.codepilot.actions;
 
 import com.codepilot.service.LLMService;
+import com.codepilot.util.CodeCleanupUtil;
 import com.codepilot.util.PromptLoader;
 import com.intellij.ide.highlighter.JavaFileType;
 import com.intellij.openapi.actionSystem.ActionUpdateThread;
@@ -43,7 +44,6 @@ public class GenerateUnitTestAction extends AnAction {
             return;
         }
 
-        // 获取选中的类或方法
         PsiElement element = psiFile.findElementAt(editor.getCaretModel().getOffset());
         PsiClass psiClass = PsiTreeUtil.getParentOfType(element, PsiClass.class);
 
@@ -52,10 +52,9 @@ public class GenerateUnitTestAction extends AnAction {
             return;
         }
 
-        // 获取用户输入的测试需求
         String requirement = Messages.showInputDialog(
                 project,
-                "请描述测试场景或需求：",
+                "请描述测试场景或需求（例如：测试空值情况、边界条件等）：",
                 "生成单元测试",
                 Messages.getQuestionIcon()
         );
@@ -64,11 +63,9 @@ public class GenerateUnitTestAction extends AnAction {
             return;
         }
 
-        // 获取源代码
         String sourceCode = psiClass.getText();
         String className = psiClass.getName();
 
-        // 在后台生成测试
         ProgressManager.getInstance().run(new Task.Backgroundable(project, "生成单元测试", false) {
             @Override
             public void run(@NotNull ProgressIndicator indicator) {
@@ -82,9 +79,11 @@ public class GenerateUnitTestAction extends AnAction {
                 variables.put("className", className);
 
                 String prompt = PromptLoader.formatPrompt("test_generation_prompt", variables);
-                String testCode = llmService.generateResponse(prompt);
+                String rawTestCode = llmService.generateResponse(prompt);
 
-                // 创建测试文件
+                // 清理生成的测试代码
+                String testCode = CodeCleanupUtil.cleanTestCode(rawTestCode, className);
+
                 ApplicationManager.getApplication().invokeLater(() -> {
                     createTestFile(project, psiFile, className, testCode);
                 });
@@ -103,7 +102,6 @@ public class GenerateUnitTestAction extends AnAction {
 
                 String testFileName = className + "Test.java";
 
-                // 检查文件是否已存在
                 PsiFile existingFile = directory.findFile(testFileName);
                 if (existingFile != null) {
                     int result = Messages.showYesNoDialog(
@@ -119,7 +117,6 @@ public class GenerateUnitTestAction extends AnAction {
                     }
                 }
 
-                // 创建测试文件
                 PsiFile testFile = PsiFileFactory.getInstance(project)
                         .createFileFromText(testFileName, JavaFileType.INSTANCE, testCode);
 
