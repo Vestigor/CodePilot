@@ -47,6 +47,7 @@ public class CodePilotToolWindow {
     private Style assistantStyle;
     private Style normalStyle;
     private Style sourceStyle;
+    private Style codeStyle;
 
     public CodePilotToolWindow(Project project) {
         this.project = project;
@@ -107,6 +108,12 @@ public class CodePilotToolWindow {
         StyleConstants.setForeground(sourceStyle, JBColor.GRAY);
         StyleConstants.setItalic(sourceStyle, true);
         StyleConstants.setFontSize(sourceStyle, 12);
+
+        // 代码样式：等宽字体，背景色
+        codeStyle = chatPane.addStyle("Code", null);
+        StyleConstants.setFontFamily(codeStyle, "Consolas");
+        StyleConstants.setFontSize(codeStyle, 12);
+        StyleConstants.setBackground(codeStyle, new Color(245, 245, 245));
     }
 
     private JPanel createTopPanel() {
@@ -271,7 +278,7 @@ public class CodePilotToolWindow {
         bottomPanel.add(inputContainer, BorderLayout.CENTER);
 
         // 提示文本
-        JBLabel hintLabel = new JBLabel("💡 提示: Enter 发送 | Shift+Enter 换行");
+        JBLabel hintLabel = new JBLabel("💡 提示: Enter 发送 | Shift+Enter 换行 | 选中代码右键可询问相关问题");
         hintLabel.setFont(JBUI.Fonts.label(11));
         hintLabel.setForeground(JBColor.GRAY);
         bottomPanel.add(hintLabel, BorderLayout.SOUTH);
@@ -389,6 +396,8 @@ public class CodePilotToolWindow {
             chatDoc.insertString(chatDoc.getLength(),
                     "知识库已加载 " + chunkCount + " 个知识块，随时为您解答课程相关问题。\n\n", normalStyle);
             chatDoc.insertString(chatDoc.getLength(),
+                    "提示：选中代码后右键可询问相关问题\n\n", sourceStyle);
+            chatDoc.insertString(chatDoc.getLength(),
                     "━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━\n\n", sourceStyle);
         } catch (BadLocationException e) {
             e.printStackTrace();
@@ -409,6 +418,25 @@ public class CodePilotToolWindow {
         inputScrollPane.setPreferredSize(new Dimension(0, MIN_INPUT_HEIGHT));
         inputScrollPane.revalidate();
 
+        // 发送消息（使用上下文感知的方法）
+        processQuestion(question, null, false);
+    }
+
+    /**
+     * 直接发送代码相关问题（从Action调用）
+     */
+    public void sendCodeQuestion(String question, String code) {
+        // 显示用户问题和代码
+        appendUserMessageWithCode(question, code);
+
+        // 发送消息
+        processQuestion(question, code, true);
+    }
+
+    /**
+     * 处理问题（统一的消息处理方法）
+     */
+    private void processQuestion(String question, String code, boolean isCodeQuestion) {
         // 禁用输入
         setInputEnabled(false);
         statusLabel.setText("正在思考...");
@@ -452,7 +480,11 @@ public class CodePilotToolWindow {
         SwingWorker<Void, Void> worker = new SwingWorker<>() {
             @Override
             protected Void doInBackground() {
-                ragService.answerQuestion(question, handler);
+                if (isCodeQuestion && code != null) {
+                    ragService.answerQuestionAboutCode(question, code, handler);
+                } else {
+                    ragService.answerQuestion(question, handler);
+                }
                 return null;
             }
 
@@ -478,6 +510,27 @@ public class CodePilotToolWindow {
         try {
             chatDoc.insertString(chatDoc.getLength(), "Student: ", studentStyle);
             chatDoc.insertString(chatDoc.getLength(), content + "\n\n", normalStyle);
+            chatPane.setCaretPosition(chatDoc.getLength());
+        } catch (BadLocationException e) {
+            e.printStackTrace();
+        }
+    }
+
+    private void appendUserMessageWithCode(String question, String code) {
+        try {
+            chatDoc.insertString(chatDoc.getLength(), "Student: ", studentStyle);
+            chatDoc.insertString(chatDoc.getLength(), question + "\n\n", normalStyle);
+
+            // 显示代码
+            chatDoc.insertString(chatDoc.getLength(), "【相关代码】\n", sourceStyle);
+
+            // 限制代码长度显示
+            String displayCode = code;
+            if (code.length() > 500) {
+                displayCode = code.substring(0, 500) + "\n... (代码已截断，共 " + code.length() + " 字符)";
+            }
+            chatDoc.insertString(chatDoc.getLength(), displayCode + "\n\n", codeStyle);
+
             chatPane.setCaretPosition(chatDoc.getLength());
         } catch (BadLocationException e) {
             e.printStackTrace();
