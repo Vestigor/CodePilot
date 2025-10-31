@@ -25,7 +25,6 @@ COMMIT MESSAGE REQUIREMENTS:
    • perf: performance improvements
 
 3. If changes are complex or affect multiple areas, add a body section：
-   - Generate multiple subjects following the format in point one.
    - Leave one blank line after subject
    - Explain what and why (not how)
 
