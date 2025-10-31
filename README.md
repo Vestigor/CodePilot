@@ -151,7 +151,7 @@ CodePilot 插件架构
 {
   "chunkId": "Lec-01_p5_c1",
   "content": "提取的文本内容...",
-  "embedding": [0.123, -0.456, ...],
+  "embedding": [0.123, -0.456, 0.789],
   "source": "Lec-01-Introduction-to-Java.pdf",
   "page": 5,
   "documentType": "pdf"
