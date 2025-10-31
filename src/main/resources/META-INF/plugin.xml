@@ -18,7 +18,7 @@
                     factoryClass="com.codepilot.ui.CodePilotToolWindowFactory"/>
 
         <!-- 项目启动活动 -->
-        <postStartupActivity implementation="com.codepilot.CodePilotPlugin$ProjectStartupActivity"/>
+        <!-- <postStartupActivity implementation="com.codepilot.CodePilotPlugin$ProjectStartupActivity"/> -->
     </extensions>
 
     <actions>

@@ -111,11 +111,6 @@ public final class DocumentProcessorService {
                 }
             }
 
-            // 保存到缓存中，以便下次使用
-            if (!allEntries.isEmpty()) {
-                KnowledgeBaseLoader.saveToFile(allEntries, PLUGIN_DATA_PATH);
-            }
-
         } catch (Exception e) {
             LOG.error("Failed to process documents", e);
         }
@@ -412,11 +407,6 @@ public final class DocumentProcessorService {
             }
         }
 
-        // 保存到缓存
-        if (!entries.isEmpty()) {
-            KnowledgeBaseLoader.saveToFile(entries, PLUGIN_DATA_PATH);
-        }
-
         return entries;
     }
 
@@ -459,11 +449,4 @@ public final class DocumentProcessorService {
         KnowledgeBaseLoader.clearCache(PLUGIN_DATA_PATH);
     }
 
-    /**
-     * 强制重新处理所有文档
-     */
-    public List<KnowledgeEntry> reprocessAllDocuments() {
-        clearCache();
-        return processAllDocuments();
-    }
 }

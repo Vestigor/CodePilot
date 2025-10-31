@@ -59,7 +59,7 @@ public final class VectorStoreService {
     }
 
     /**
-     * 索引知识条目并生成嵌入
+     * 创建索引知识条目并生成嵌入
      * 如果条目已经有嵌入，则使用它们；否则生成新的嵌入
      */
     public void indexKnowledgeEntries(List<KnowledgeEntry> entries) {
