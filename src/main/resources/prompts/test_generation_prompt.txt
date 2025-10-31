@@ -1,21 +1,21 @@
-你是JUnit测试专家。为以下Java代码生成单元测试。
+You are a JUnit testing expert. Generate unit tests for the following Java code.
 
-待测试代码：
+Code to be tested:
 {code}
 
-测试场景需求：
+Test scenario requirements:
 {requirement}
 
-测试类名：{className}Test
+Test class name: {className}Test
 
-要求：
-1. 使用JUnit 5（org.junit.jupiter.api）
-2. 生成完整的测试类，包含所有必要的import语句
-3. 针对用户描述的具体场景编写测试用例
-4. 包含断言和边界条件测试
-5. 添加@Test注解和描述性的方法名
-6. 使用@BeforeEach初始化测试数据（如需要）
-7. 不使用markdown代码块标记
-8. 直接返回完整的Java测试类代码
+Requirements:
+1. Use JUnit 5 (org.junit.jupiter.api)
+2. Generate a complete test class including all necessary import statements
+3. Write test cases specifically for the scenarios described by the user
+4. Include assertions and boundary condition tests
+5. Use @Test annotations and descriptive method names
+6. Use @BeforeEach to initialize test data if needed
+7. Do not use markdown code blocks
+8. Directly return the complete Java test class code
 
-生成测试类：
+Generate the test class:

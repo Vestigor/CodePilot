@@ -16,49 +16,85 @@ import javax.swing.*;
 import javax.swing.border.Border;
 import javax.swing.event.DocumentEvent;
 import javax.swing.event.DocumentListener;
-import javax.swing.text.*;
 import java.awt.*;
 import java.awt.event.KeyAdapter;
 import java.awt.event.KeyEvent;
 
+/**
+ * 增强的 CodePilot 工具窗口，支持 Markdown 渲染
+ */
 public class CodePilotToolWindow {
+    // 输入框高度限制常量
+    private static final int MIN_INPUT_HEIGHT = 40;
+    private static final int MAX_INPUT_HEIGHT = 120;
+    private static final int LINE_HEIGHT = 20;
+
+    // 服务相关
     private final Project project;
     private final RAGService ragService;
     private final ConfigManager configManager;
+    private final MarkdownRenderer markdownRenderer;
 
+    // UI 组件
     private JPanel mainPanel;
-    private JTextPane chatPane;
     private JTextArea inputArea;
     private JButton sendButton;
     private JButton clearButton;
     private JButton settingsButton;
     private JLabel statusLabel;
     private JScrollPane inputScrollPane;
-    private StyledDocument chatDoc;
     private StreamingOutputHandler outputHandler;
 
-    // 输入框高度限制
-    private static final int MIN_INPUT_HEIGHT = 60;
-    private static final int MAX_INPUT_HEIGHT = 200;
-    private static final int LINE_HEIGHT = 20;
-
-    // 样式定义
-    private Style studentStyle;
-    private Style assistantStyle;
-    private Style normalStyle;
-    private Style sourceStyle;
-    private Style codeStyle;
+    // 状态变量 - 用于跟踪当前正在流式传输的消息
+    private StringBuilder currentAssistantMessage;
+    private boolean isStreaming = false;
 
     public CodePilotToolWindow(Project project) {
         this.project = project;
         this.ragService = RAGService.getInstance(project);
         this.configManager = ApplicationManager.getApplication().getService(ConfigManager.class);
+        this.markdownRenderer = new MarkdownRenderer();
+        this.currentAssistantMessage = new StringBuilder();
 
         initializeUI();
-        initializeStyles();
         initializeRAG();
     }
 
+    /**
+     * 获取主面板内容
+     */
+    public JPanel getContent() {
+        return mainPanel;
+    }
+
+    /**
+     * 直接发送代码相关问题
+     */
+    public void sendCodeQuestion(String question, String code) {
+        // 显示用户问题和代码
+        String messageWithCode = question + "\n\n```java\n" + code + "\n```";
+        markdownRenderer.renderMarkdown(messageWithCode, MarkdownRenderer.MessageType.STUDENT);
+
+        // 处理问题
+        processQuestion(question, code, true);
+    }
+
+    /**
+     * 追加文本到输入框
+     */
+    public void appendToInput(String text) {
+        String currentText = inputArea.getText();
+        if (!currentText.isEmpty() && !currentText.endsWith("\n")) {
+            inputArea.append("\n");
+        }
+        inputArea.append(text);
+        adjustInputHeight();
+        inputArea.requestFocus();
+    }
+
+    /**
+     * 初始化用户界面
+     */
     private void initializeUI() {
         mainPanel = new JPanel(new BorderLayout(0, 0));
         mainPanel.setBackground(UIUtil.getPanelBackground());
@@ -68,7 +104,7 @@ public class CodePilotToolWindow {
         JPanel topPanel = createTopPanel();
         mainPanel.add(topPanel, BorderLayout.NORTH);
 
-        // 对话显示区域
+        // 使用 Markdown 渲染器的聊天显示区域
         JPanel chatPanel = createChatPanel();
         mainPanel.add(chatPanel, BorderLayout.CENTER);
 
@@ -77,45 +113,9 @@ public class CodePilotToolWindow {
         mainPanel.add(bottomPanel, BorderLayout.SOUTH);
     }
 
-    private void initializeStyles() {
-        chatDoc = chatPane.getStyledDocument();
-
-        // Student 样式：蓝色、加粗
-        studentStyle = chatPane.addStyle("Student", null);
-        StyleConstants.setForeground(studentStyle, new JBColor(
-                new Color(0x1976D2),
-                new Color(0x64B5F6)
-        ));
-        StyleConstants.setBold(studentStyle, true);
-        StyleConstants.setFontSize(studentStyle, 14);
-
-        // CodePilot 样式：绿色、加粗
-        assistantStyle = chatPane.addStyle("CodePilot", null);
-        StyleConstants.setForeground(assistantStyle, new JBColor(
-                new Color(0x388E3C),
-                new Color(0x81C784)
-        ));
-        StyleConstants.setBold(assistantStyle, true);
-        StyleConstants.setFontSize(assistantStyle, 14);
-
-        // 普通文本样式
-        normalStyle = chatPane.addStyle("Normal", null);
-        StyleConstants.setForeground(normalStyle, UIUtil.getLabelForeground());
-        StyleConstants.setFontSize(normalStyle, 13);
-
-        // 来源样式：灰色、斜体
-        sourceStyle = chatPane.addStyle("Source", null);
-        StyleConstants.setForeground(sourceStyle, JBColor.GRAY);
-        StyleConstants.setItalic(sourceStyle, true);
-        StyleConstants.setFontSize(sourceStyle, 12);
-
-        // 代码样式：等宽字体，背景色
-        codeStyle = chatPane.addStyle("Code", null);
-        StyleConstants.setFontFamily(codeStyle, "Consolas");
-        StyleConstants.setFontSize(codeStyle, 12);
-        StyleConstants.setBackground(codeStyle, new Color(245, 245, 245));
-    }
-
+    /**
+     * 创建顶部面板
+     */
     private JPanel createTopPanel() {
         JPanel topPanel = new JPanel(new BorderLayout());
         topPanel.setBackground(UIUtil.getPanelBackground());
@@ -136,7 +136,7 @@ public class CodePilotToolWindow {
 
         leftPanel.add(Box.createVerticalStrut(4));
 
-        statusLabel = new JBLabel("正在初始化...");
+        statusLabel = new JBLabel("Initializing...");
         statusLabel.setFont(JBUI.Fonts.label(11));
         statusLabel.setForeground(JBColor.GRAY);
         leftPanel.add(statusLabel);
@@ -147,11 +147,11 @@ public class CodePilotToolWindow {
         JPanel buttonPanel = new JPanel(new FlowLayout(FlowLayout.RIGHT, 8, 0));
         buttonPanel.setOpaque(false);
 
-        clearButton = createIconButton("🗑", "清空对话");
+        clearButton = createIconButton("🗑", "Clear conversation");
         clearButton.addActionListener(e -> clearChat());
         buttonPanel.add(clearButton);
 
-        settingsButton = createIconButton("⚙", "设置");
+        settingsButton = createIconButton("⚙", "Settings");
         settingsButton.addActionListener(e -> showSettings());
         buttonPanel.add(settingsButton);
 
@@ -160,26 +160,31 @@ public class CodePilotToolWindow {
         return topPanel;
     }
 
+    /**
+     * 创建聊天显示面板
+     */
     private JPanel createChatPanel() {
         JPanel chatPanel = new JPanel(new BorderLayout());
         chatPanel.setBackground(UIUtil.getPanelBackground());
         chatPanel.setBorder(JBUI.Borders.empty(0, 8, 8, 8));
 
-        chatPane = new JTextPane();
-        chatPane.setEditable(false);
-        chatPane.setBackground(UIUtil.getTextFieldBackground());
-        chatPane.setMargin(JBUI.insets(12));
+        // 使用 Markdown 渲染器的组件
+        JComponent markdownComponent = markdownRenderer.getComponent();
+        if (markdownComponent instanceof JScrollPane) {
+            JScrollPane scrollPane = (JScrollPane) markdownComponent;
+            scrollPane.setBorder(createRoundedBorder());
+            scrollPane.setVerticalScrollBarPolicy(ScrollPaneConstants.VERTICAL_SCROLLBAR_AS_NEEDED);
+            scrollPane.setHorizontalScrollBarPolicy(ScrollPaneConstants.HORIZONTAL_SCROLLBAR_NEVER);
+        }
 
-        JBScrollPane chatScrollPane = new JBScrollPane(chatPane);
-        chatScrollPane.setBorder(createRoundedBorder());
-        chatScrollPane.setVerticalScrollBarPolicy(ScrollPaneConstants.VERTICAL_SCROLLBAR_AS_NEEDED);
-        chatScrollPane.setHorizontalScrollBarPolicy(ScrollPaneConstants.HORIZONTAL_SCROLLBAR_NEVER);
-
-        chatPanel.add(chatScrollPane, BorderLayout.CENTER);
+        chatPanel.add(markdownComponent, BorderLayout.CENTER);
 
         return chatPanel;
     }
 
+    /**
+     * 创建底部输入面板
+     */
     private JPanel createBottomPanel() {
         JPanel bottomPanel = new JPanel(new BorderLayout(0, 8));
         bottomPanel.setBackground(UIUtil.getPanelBackground());
@@ -189,8 +194,8 @@ public class CodePilotToolWindow {
         JPanel inputContainer = new JPanel(new BorderLayout(8, 0));
         inputContainer.setOpaque(false);
 
-        // 输入框
-        inputArea = new JTextArea(3, 20);
+        // 输入文本区域
+        inputArea = new JTextArea(1, 20);
         inputArea.setLineWrap(true);
         inputArea.setWrapStyleWord(true);
         inputArea.setFont(JBUI.Fonts.label(13));
@@ -221,9 +226,12 @@ public class CodePilotToolWindow {
             public void keyPressed(KeyEvent e) {
                 if (e.getKeyCode() == KeyEvent.VK_ENTER) {
                     if (e.isShiftDown()) {
-                        // Shift+Enter 允许换行，使用默认行为
+                        // Shift+Enter 添加新行
+                        inputArea.append("\n");
+                        adjustInputHeight();
+                        e.consume();
                     } else {
-                        // Enter 发送
+                        // Enter 发送消息
                         sendMessage();
                         e.consume();
                     }
@@ -241,9 +249,9 @@ public class CodePilotToolWindow {
 
         // 发送按钮
         sendButton = new JButton();
-        sendButton.setText("发送");
+        sendButton.setText("Send");
         sendButton.setFont(JBUI.Fonts.label(13).asBold());
-        sendButton.setPreferredSize(new Dimension(70, 60));
+        sendButton.setPreferredSize(new Dimension(70, 40));
         sendButton.setFocusPainted(false);
         sendButton.setBackground(new JBColor(
                 new Color(0x4A90E2),
@@ -277,8 +285,8 @@ public class CodePilotToolWindow {
 
         bottomPanel.add(inputContainer, BorderLayout.CENTER);
 
-        // 提示文本
-        JBLabel hintLabel = new JBLabel("💡 提示: Enter 发送 | Shift+Enter 换行 | 选中代码右键可询问相关问题");
+        // 提示标签
+        JBLabel hintLabel = new JBLabel("💡 Tip: Enter to send | Shift+Enter for new line");
         hintLabel.setFont(JBUI.Fonts.label(11));
         hintLabel.setForeground(JBColor.GRAY);
         bottomPanel.add(hintLabel, BorderLayout.SOUTH);
@@ -286,6 +294,9 @@ public class CodePilotToolWindow {
         return bottomPanel;
     }
 
+    /**
+     * 创建图标按钮
+     */
     private JButton createIconButton(String icon, String tooltip) {
         JButton button = new JButton(icon);
         button.setFont(new Font("Segoe UI Emoji", Font.PLAIN, 16));
@@ -316,6 +327,9 @@ public class CodePilotToolWindow {
         return button;
     }
 
+    /**
+     * 创建圆角边框
+     */
     private Border createRoundedBorder() {
         return BorderFactory.createCompoundBorder(
                 BorderFactory.createLineBorder(new JBColor(
@@ -353,7 +367,7 @@ public class CodePilotToolWindow {
                 // 计算高度
                 int height = Math.min(
                         MAX_INPUT_HEIGHT,
-                        Math.max(MIN_INPUT_HEIGHT, lines * LINE_HEIGHT + 20)
+                        Math.max(MIN_INPUT_HEIGHT, lines * LINE_HEIGHT)
                 );
 
                 Dimension newSize = new Dimension(inputScrollPane.getWidth(), height);
@@ -368,8 +382,11 @@ public class CodePilotToolWindow {
         });
     }
 
+    /**
+     * 初始化 RAG 服务
+     */
     private void initializeRAG() {
-        statusLabel.setText("正在初始化知识库...");
+        statusLabel.setText("Initializing knowledge base...");
 
         SwingWorker<Void, Void> worker = new SwingWorker<>() {
             @Override
@@ -381,99 +398,97 @@ public class CodePilotToolWindow {
             @Override
             protected void done() {
                 int chunkCount = ragService.getIndexedChunkCount();
-                statusLabel.setText("已就绪 · " + chunkCount + " 个知识块");
+                statusLabel.setText("Ready · " + chunkCount + " knowledge chunks");
                 appendWelcomeMessage(chunkCount);
             }
         };
         worker.execute();
     }
 
+    /**
+     * 追加欢迎消息
+     */
     private void appendWelcomeMessage(int chunkCount) {
-        try {
-            chatDoc.insertString(chatDoc.getLength(), "👋 欢迎使用 CodePilot\n\n", normalStyle);
-            chatDoc.insertString(chatDoc.getLength(),
-                    "我是您的 Java 企业应用开发课程教学助手。\n", normalStyle);
-            chatDoc.insertString(chatDoc.getLength(),
-                    "知识库已加载 " + chunkCount + " 个知识块，随时为您解答课程相关问题。\n\n", normalStyle);
-            chatDoc.insertString(chatDoc.getLength(),
-                    "提示：选中代码后右键可询问相关问题\n\n", sourceStyle);
-            chatDoc.insertString(chatDoc.getLength(),
-                    "━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━\n\n", sourceStyle);
-        } catch (BadLocationException e) {
-            e.printStackTrace();
-        }
+        String welcomeMessage = """
+            # 👋 Welcome to CodePilot
+            
+            I am your teaching assistant for **Java Enterprise Application Development** course.
+            
+            Knowledge base loaded with **%d knowledge chunks**, ready to answer course-related questions.
+            
+            *Tip: Right-click selected code to ask related questions*
+            
+            ---
+            """.formatted(chunkCount);
+
+        markdownRenderer.renderMarkdown(welcomeMessage, MarkdownRenderer.MessageType.SYSTEM);
     }
 
+    /**
+     * 发送消息
+     */
     private void sendMessage() {
         String question = inputArea.getText().trim();
-        if (question.isEmpty()) {
+        if (question.isEmpty() || isStreaming) {
             return;
         }
 
         // 显示用户问题
-        appendUserMessage(question);
+        markdownRenderer.renderMarkdown(question, MarkdownRenderer.MessageType.STUDENT);
         inputArea.setText("");
 
         // 重置输入框高度
         inputScrollPane.setPreferredSize(new Dimension(0, MIN_INPUT_HEIGHT));
         inputScrollPane.revalidate();
 
-        // 发送消息（使用上下文感知的方法）
+        // 处理问题
         processQuestion(question, null, false);
     }
 
     /**
-     * 直接发送代码相关问题（从Action调用）
-     */
-    public void sendCodeQuestion(String question, String code) {
-        // 显示用户问题和代码
-        appendUserMessageWithCode(question, code);
-
-        // 发送消息
-        processQuestion(question, code, true);
-    }
-
-    /**
-     * 处理问题（统一的消息处理方法）
+     * 处理问题
      */
     private void processQuestion(String question, String code, boolean isCodeQuestion) {
         // 禁用输入
         setInputEnabled(false);
-        statusLabel.setText("正在思考...");
+        statusLabel.setText("Thinking...");
+        isStreaming = true;
+        currentAssistantMessage.setLength(0);
 
-        // 显示助手标签
-        appendAssistantHeader();
+        // 开始时显示助手标签
+        markdownRenderer.renderMarkdown("", MarkdownRenderer.MessageType.ASSISTANT);
 
-        // 创建特殊的输出处理器用于富文本
+        // 为 Markdown 创建流式输出处理器
         StreamingOutputHandler handler = new StreamingOutputHandler(null) {
+            private final StringBuilder buffer = new StringBuilder();
+            private int lastRenderedLength = 0; // 记录上次渲染的长度
+
             @Override
             public void appendToken(String token) {
                 SwingUtilities.invokeLater(() -> {
-                    try {
-                        chatDoc.insertString(chatDoc.getLength(), token, normalStyle);
-                        chatPane.setCaretPosition(chatDoc.getLength());
-                    } catch (BadLocationException e) {
-                        e.printStackTrace();
+                    buffer.append(token);
+                    currentAssistantMessage.append(token);
+
+                    // 使用增量渲染而不是每次都清除重渲染
+                    if (currentAssistantMessage.length() - lastRenderedLength > 50) {
+                        // 每累积 50 个字符更新一次，减少渲染频率，防止卡顿
+                        updateAssistantMessage();
+                        lastRenderedLength = currentAssistantMessage.length();
                     }
                 });
             }
 
             @Override
             public void appendLine(String line) {
-                SwingUtilities.invokeLater(() -> {
-                    try {
-                        // 检测是否是来源信息
-                        if (line.contains("【参考来源】") || line.startsWith("- ") ||
-                                line.contains("本回答基于通识知识")) {
-                            chatDoc.insertString(chatDoc.getLength(), line + "\n", sourceStyle);
-                        } else {
-                            chatDoc.insertString(chatDoc.getLength(), line + "\n", normalStyle);
-                        }
-                        chatPane.setCaretPosition(chatDoc.getLength());
-                    } catch (BadLocationException e) {
-                        e.printStackTrace();
-                    }
-                });
+                appendToken(line + "\n");
+            }
+
+            private void updateAssistantMessage() {
+                // 移除旧的助手消息并添加新的
+                markdownRenderer.updateLastMessage(
+                        currentAssistantMessage.toString(),
+                        MarkdownRenderer.MessageType.ASSISTANT
+                );
             }
         };
 
@@ -490,100 +505,60 @@ public class CodePilotToolWindow {
 
             @Override
             protected void done() {
-                setInputEnabled(true);
-                statusLabel.setText("已就绪 · " + ragService.getIndexedChunkCount() + " 个知识块");
-                inputArea.requestFocus();
+                // 最后一次更新，确保所有内容都显示
+                SwingUtilities.invokeLater(() -> {
+                    markdownRenderer.updateLastMessage(
+                            currentAssistantMessage.toString(),
+                            MarkdownRenderer.MessageType.ASSISTANT
+                    );
+                });
 
-                // 添加分隔线
-                try {
-                    chatDoc.insertString(chatDoc.getLength(),
-                            "\n━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━\n\n", sourceStyle);
-                } catch (BadLocationException e) {
-                    e.printStackTrace();
-                }
+                setInputEnabled(true);
+                statusLabel.setText("Ready · " + ragService.getIndexedChunkCount() + " knowledge chunks");
+                inputArea.requestFocus();
+                isStreaming = false;
+
+                // 添加分隔符
+                markdownRenderer.addSeparator();
             }
         };
         worker.execute();
     }
 
-    private void appendUserMessage(String content) {
-        try {
-            chatDoc.insertString(chatDoc.getLength(), "Student: ", studentStyle);
-            chatDoc.insertString(chatDoc.getLength(), content + "\n\n", normalStyle);
-            chatPane.setCaretPosition(chatDoc.getLength());
-        } catch (BadLocationException e) {
-            e.printStackTrace();
-        }
-    }
-
-    private void appendUserMessageWithCode(String question, String code) {
-        try {
-            chatDoc.insertString(chatDoc.getLength(), "Student: ", studentStyle);
-            chatDoc.insertString(chatDoc.getLength(), question + "\n\n", normalStyle);
-
-            // 显示代码
-            chatDoc.insertString(chatDoc.getLength(), "【相关代码】\n", sourceStyle);
-
-            // 限制代码长度显示
-            String displayCode = code;
-            if (code.length() > 500) {
-                displayCode = code.substring(0, 500) + "\n... (代码已截断，共 " + code.length() + " 字符)";
-            }
-            chatDoc.insertString(chatDoc.getLength(), displayCode + "\n\n", codeStyle);
-
-            chatPane.setCaretPosition(chatDoc.getLength());
-        } catch (BadLocationException e) {
-            e.printStackTrace();
-        }
-    }
-
-    private void appendAssistantHeader() {
-        try {
-            chatDoc.insertString(chatDoc.getLength(), "CodePilot: ", assistantStyle);
-            chatPane.setCaretPosition(chatDoc.getLength());
-        } catch (BadLocationException e) {
-            e.printStackTrace();
-        }
-    }
-
+    /**
+     * 设置输入是否启用
+     */
     private void setInputEnabled(boolean enabled) {
         sendButton.setEnabled(enabled);
         inputArea.setEnabled(enabled);
         clearButton.setEnabled(enabled);
     }
 
+    /**
+     * 清除聊天记录
+     */
     private void clearChat() {
         int result = Messages.showYesNoDialog(
                 project,
-                "确定要清空所有对话记录吗？",
-                "清空对话",
-                "清空",
-                "取消",
+                "Are you sure you want to clear all conversation records?",
+                "Clear Conversation",
+                "Clear",
+                "Cancel",
                 Messages.getQuestionIcon()
         );
 
         if (result == Messages.YES) {
-            chatPane.setText("");
+            markdownRenderer.clear();
+            currentAssistantMessage.setLength(0);
             appendWelcomeMessage(ragService.getIndexedChunkCount());
         }
     }
 
-    public void appendToInput(String text) {
-        String currentText = inputArea.getText();
-        if (!currentText.isEmpty() && !currentText.endsWith("\n")) {
-            inputArea.append("\n");
-        }
-        inputArea.append(text);
-        adjustInputHeight();
-        inputArea.requestFocus();
-    }
-
+    /**
+     * 显示设置对话框
+     */
     private void showSettings() {
         SettingsDialog dialog = new SettingsDialog(project);
         dialog.show();
-    }
-
-    public JPanel getContent() {
-        return mainPanel;
     }
 }

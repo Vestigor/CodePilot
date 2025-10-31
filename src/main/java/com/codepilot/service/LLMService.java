@@ -23,24 +23,31 @@ public final class LLMService {
     private final Project project;
     private final ConfigManager configManager;
 
+    // 构造方法，初始化项目和配置管理器
     public LLMService(Project project) {
         this.project = project;
         this.configManager = ApplicationManager.getApplication().getService(ConfigManager.class);
     }
 
+    // 获取LLMService实例
     public static LLMService getInstance(Project project) {
         return project.getService(LLMService.class);
     }
 
+    // 生成流式响应
     public void generateStreamingResponse(String prompt, StreamingOutputHandler handler) {
         try {
+            // 创建Generation实例
             Generation gen = new Generation();
+            // 创建用户消息
             Message userMsg = Message.builder()
                     .role(Role.USER.getValue())
                     .content(prompt)
                     .build();
 
+            // 获取当前模型配置
             ModelConfig modelConfig = configManager.getCurrentModelConfig();
+            // 设置生成参数
             GenerationParam param = GenerationParam.builder()
                     .apiKey(configManager.getApiKey())
                     .model(modelConfig.getName())
@@ -49,37 +56,47 @@ public final class LLMService {
                     .messages(Arrays.asList(userMsg))
                     .build();
 
+            // 发起流式调用，获取结果
             Flowable<GenerationResult> result = gen.streamCall(param);
             result.blockingForEach(message -> {
+                // 如果处理被取消，停止处理
                 if (handler.isCancelled()) {
                     return;
                 }
 
+                // 提取响应内容
                 String content = message.getOutput()
                         .getChoices()
                         .get(0)
                         .getMessage()
                         .getContent();
 
+                // 如果内容不为空，则将其追加到输出
                 if (content != null && !content.isEmpty()) {
                     handler.appendToken(content);
                 }
             });
         } catch (Exception e) {
+            // 记录错误日志并向输出处理器添加错误信息
             LOG.error("Failed to generate streaming response", e);
-            handler.appendLine("\n[错误] 生成回复失败: " + e.getMessage());
+            handler.appendLine("\n[Error] Failed to generate response: " + e.getMessage());
         }
     }
 
+    // 生成常规响应
     public String generateResponse(String prompt) {
         try {
+            // 创建Generation实例
             Generation gen = new Generation();
+            // 创建用户消息
             Message userMsg = Message.builder()
                     .role(Role.USER.getValue())
                     .content(prompt)
                     .build();
 
+            // 获取当前模型配置
             ModelConfig modelConfig = configManager.getCurrentModelConfig();
+            // 设置生成参数
             GenerationParam param = GenerationParam.builder()
                     .apiKey(configManager.getApiKey())
                     .model(modelConfig.getName())
@@ -87,6 +104,7 @@ public final class LLMService {
                     .messages(Arrays.asList(userMsg))
                     .build();
 
+            // 获取生成的结果
             GenerationResult result = gen.call(param);
             return result.getOutput()
                     .getChoices()
@@ -94,17 +112,21 @@ public final class LLMService {
                     .getMessage()
                     .getContent();
         } catch (Exception e) {
+            // 记录错误日志并返回错误信息
             LOG.error("Failed to generate response", e);
-            return "[错误] 生成回复失败: " + e.getMessage();
+            return "[Error] Failed to generate response: " + e.getMessage();
         }
     }
 
-    public void generateResponseWithHistory(List<Message> messages,
-                                            StreamingOutputHandler handler) {
+    // 使用消息历史生成流式响应
+    public void generateResponseWithHistory(List<Message> messages, StreamingOutputHandler handler) {
         try {
+            // 创建Generation实例
             Generation gen = new Generation();
+            // 获取当前模型配置
             ModelConfig modelConfig = configManager.getCurrentModelConfig();
 
+            // 设置生成参数
             GenerationParam param = GenerationParam.builder()
                     .apiKey(configManager.getApiKey())
                     .model(modelConfig.getName())
@@ -113,25 +135,30 @@ public final class LLMService {
                     .messages(messages)
                     .build();
 
+            // 发起流式调用，获取结果
             Flowable<GenerationResult> result = gen.streamCall(param);
             result.blockingForEach(message -> {
+                // 如果处理被取消，停止处理
                 if (handler.isCancelled()) {
                     return;
                 }
 
+                // 提取响应内容
                 String content = message.getOutput()
                         .getChoices()
                         .get(0)
                         .getMessage()
                         .getContent();
 
+                // 如果内容不为空，则将其追加到输出
                 if (content != null && !content.isEmpty()) {
                     handler.appendToken(content);
                 }
             });
         } catch (Exception e) {
+            // 记录错误日志并向输出处理器添加错误信息
             LOG.error("Failed to generate response with history", e);
-            handler.appendLine("\n[错误] 生成回复失败: " + e.getMessage());
+            handler.appendLine("\n[Error] Failed to generate response: " + e.getMessage());
         }
     }
 }

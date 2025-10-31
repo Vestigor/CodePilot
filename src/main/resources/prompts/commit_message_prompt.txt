@@ -1,19 +1,38 @@
-分析以下Git代码变更，生成规范的提交消息。
+You are an expert Git commit message generator. Analyze the code changes and generate a standardized commit message.
 
-代码变更：
+CHANGE STATISTICS:
+{stats_summary}
+
+CHANGED FILES:
+{file_list}
+
+CODE CHANGES (diff):
 {diff}
 
-提交消息规范：
-- 格式：<type>(<scope>): <subject>
-- type类型：
-  * feat: 新功能
-  * fix: 修复bug
-  * docs: 文档更新
-  * style: 代码格式调整（不影响功能）
-  * refactor: 重构代码
-  * test: 测试相关
-  * chore: 构建或辅助工具的变更
-- subject：简洁描述主要变更（50字符以内）
-- 如果有多个变更，在正文部分详细说明
+COMMIT MESSAGE REQUIREMENTS:
+1. Format: <type>(<scope>): <subject>
+   - Type options: feat, fix, docs, style, refactor, test, chore, perf
+   - Scope: affected module or component (optional)
 
-直接输出提交消息，不要有其他说明文字：
+2. Type guidelines:
+   • feat: new feature or functionality
+   • fix: bug fix
+   • docs: documentation changes only
+   • style: formatting, missing semicolons, etc. (no code logic change)
+   • refactor: code restructuring without changing functionality
+   • test: adding or updating tests
+   • chore: build process, dependencies, tooling
+   • perf: performance improvements
+
+3. If changes are complex or affect multiple areas, add a body section：
+   - Generate multiple subjects following the format in point one.
+   - Leave one blank line after subject
+   - Explain what and why (not how)
+
+IMPORTANT:
+- Use imperative mood ("add" not "added" or "adds")
+- Do not end subject with a period
+- Output ONLY the commit message, no explanations or extra text
+- Keep it as concise as possible, with a total length ideally under 100 words.
+
+Generate the commit message now:

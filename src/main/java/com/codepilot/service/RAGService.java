@@ -1,6 +1,5 @@
 package com.codepilot.service;
 
-import com.codepilot.model.ChatMessage;
 import com.codepilot.model.KnowledgeEntry;
 import com.codepilot.util.ConfigManager;
 import com.codepilot.util.KnowledgeBaseLoader;
@@ -17,12 +16,11 @@ import com.intellij.openapi.util.Computable;
 import com.intellij.openapi.vfs.VirtualFile;
 import com.intellij.psi.*;
 
-import java.io.IOException;
 import java.util.*;
 import java.util.stream.Collectors;
 
 /**
- * Improved RAG Service with context awareness
+ * RAG服务，具备上下文感知能力
  */
 @Service(Service.Level.PROJECT)
 public final class RAGService {
@@ -35,7 +33,7 @@ public final class RAGService {
     private boolean isInitialized = false;
     private static final String PLUGIN_DATA_PATH = PathManager.getPluginsPath() + "/CodePilot/data";
 
-    // Similarity thresholds
+    // 相似度阈值
     private static final double SIMILARITY_THRESHOLD = 0.5;
     private static final double HIGH_SIMILARITY_THRESHOLD = 0.7;
 
@@ -47,12 +45,13 @@ public final class RAGService {
         this.configManager = ApplicationManager.getApplication().getService(ConfigManager.class);
     }
 
+    // 获取RAGService实例
     public static RAGService getInstance(Project project) {
         return project.getService(RAGService.class);
     }
 
     /**
-     * Initialize the RAG service with intelligent caching
+     * 初始化RAG服务，支持智能缓存
      */
     public void initialize() {
         if (isInitialized) {
@@ -61,15 +60,15 @@ public final class RAGService {
 
         LOG.info("Initializing Improved RAG Service...");
 
-        // Check if we have cached knowledge base
+        // 检查是否有缓存的知识库
         if (KnowledgeBaseLoader.cacheExists(PLUGIN_DATA_PATH)) {
             LOG.info("Found cached knowledge base");
 
-            // Load cached entries
+            // 加载缓存的条目
             List<KnowledgeEntry> cachedEntries = KnowledgeBaseLoader.loadFromFile(PLUGIN_DATA_PATH);
 
             if (!cachedEntries.isEmpty()) {
-                // Index cached entries (they should already have embeddings)
+                // 索引缓存的条目
                 vectorStore.indexKnowledgeEntries(cachedEntries);
                 isInitialized = true;
                 LOG.info("Initialized with " + cachedEntries.size() + " cached entries");
@@ -77,7 +76,7 @@ public final class RAGService {
             }
         }
 
-        // If no cache or cache is empty, process documents
+        // 如果没有缓存或者缓存为空，处理文档
         LOG.info("Processing documents to build knowledge base...");
         List<KnowledgeEntry> entries = documentProcessor.processAllDocuments();
 
@@ -87,7 +86,7 @@ public final class RAGService {
             return;
         }
 
-        // Index the entries (will generate embeddings if needed)
+        // 索引条目
         vectorStore.indexKnowledgeEntries(entries);
 
         isInitialized = true;
@@ -108,23 +107,23 @@ public final class RAGService {
                 if (selectedEditor != null) {
                     VirtualFile currentFile = fileEditorManager.getSelectedFiles()[0];
                     if (currentFile != null) {
-                        context.append("【当前文件】").append(currentFile.getName()).append("\n");
+                        context.append("【Current File】").append(currentFile.getName()).append("\n");
 
                         String fileContent = new String(currentFile.contentsToByteArray());
                         if (fileContent.length() > 1000) {
-                            fileContent = fileContent.substring(0, 1000) + "\n... (内容已截断)";
+                            fileContent = fileContent.substring(0, 1000) + "\n... (content truncated)";
                         }
-                        context.append("【文件内容】\n").append(fileContent).append("\n");
+                        context.append("【File Content】\n").append(fileContent).append("\n");
 
                         int offset = selectedEditor.getCaretModel().getOffset();
                         int lineNumber = selectedEditor.getDocument().getLineNumber(offset);
-                        context.append("【当前行号】").append(lineNumber + 1).append("\n");
+                        context.append("【Current Line Number】").append(lineNumber + 1).append("\n");
                     }
                 }
 
                 VirtualFile[] openFiles = fileEditorManager.getOpenFiles();
                 if (openFiles.length > 0) {
-                    context.append("【打开的文件】\n");
+                    context.append("【Opened Files】\n");
                     for (int i = 0; i < Math.min(5, openFiles.length); i++) {
                         context.append("- ").append(openFiles[i].getName()).append("\n");
                     }
@@ -139,33 +138,33 @@ public final class RAGService {
     }
 
     /**
-     * Answer a question using RAG with context awareness
+     * 使用RAG和上下文感知回答问题
      */
     public void answerQuestion(String question, StreamingOutputHandler handler) {
         answerQuestionWithContext(question, null, handler, false);
     }
 
     /**
-     * Answer a question about specific code
+     * 回答关于特定代码的问题
      */
     public void answerQuestionAboutCode(String question, String code, StreamingOutputHandler handler) {
         answerQuestionWithContext(question, code, handler, true);
     }
 
     /**
-     * Unified method for answering questions with or without code context
+     * 根据是否有代码上下文来统一处理问题
      */
     public void answerQuestionWithContext(String question, String codeSnippet,
                                           StreamingOutputHandler handler, boolean isCodeQuestion) {
         if (!isInitialized) {
-            handler.appendLine("正在初始化知识库，请稍候...\n");
+            handler.appendLine("Initializing knowledge base, please wait...\n");
             initialize();
         }
 
-        // 获取编程上下文
+        // 获取当前编程上下文
         String programmingContext = getCurrentProgrammingContext();
 
-        // 搜索相关知识
+        // 搜索相关的知识
         List<KnowledgeEntry> relevantEntries = vectorStore.search(question,
                 configManager.getMaxRetrievalResults());
 
@@ -192,11 +191,11 @@ public final class RAGService {
                 sourceEntries.sort(Comparator.comparingInt(KnowledgeEntry::getPage));
 
                 for (KnowledgeEntry entry : sourceEntries) {
-                    ragContext.append("【来源：").append(sourceName)
-                            .append(" - 第").append(entry.getPage()).append("页】\n");
+                    ragContext.append("【Source: ").append(sourceName)
+                            .append(" - Page ").append(entry.getPage()).append("】\n");
                     ragContext.append(entry.getContent()).append("\n\n");
 
-                    String source = sourceName + " (第 " + entry.getPage() + " 页)";
+                    String source = sourceName + " (Page " + entry.getPage() + ")";
                     if (!sources.contains(source)) {
                         sources.add(source);
                     }
@@ -206,7 +205,7 @@ public final class RAGService {
             LOG.info("No relevant entries found above similarity threshold");
         }
 
-        // 构建完整提示
+        // 构建完整的提示
         Map<String, String> variables = new HashMap<>();
         variables.put("rag_context", ragContext.toString());
         variables.put("programming_context", programmingContext);
@@ -248,44 +247,42 @@ public final class RAGService {
         });
 
         // 添加来源
-        handler.appendLine("\n\n【参考来源】\n");
+        handler.appendLine("\n---\n");
         if (hasRelevantMaterial) {
             for (String source : sources) {
-                handler.appendLine("- " + source);
+                handler.appendLine("【Reference Source: " + source + "】");
             }
         } else {
-            handler.appendLine("本回答基于通识知识，未引用课程资料");
+            handler.appendLine("【Note: This answer is based on general knowledge, no course materials referenced】");
         }
         handler.appendLine("\n");
+
     }
 
     /**
-     * Filter entries by similarity threshold
+     * 根据相似度阈值过滤条目
      */
     private List<KnowledgeEntry> filterBySimilarity(List<KnowledgeEntry> entries, double threshold) {
-        // Note: Since KnowledgeEntry doesn't have a similarity field,
-        // we would need to modify it or use a wrapper class
-        // For now, we'll return all entries assuming they're pre-filtered
         return entries;
     }
 
     /**
-     * Force reinitialization with fresh data
+     * 强制重新初始化并使用最新数据
      */
     public void reinitialize() {
         isInitialized = false;
 
-        // Clear all caches
+        // 清空所有缓存
         documentProcessor.clearCache();
         vectorStore.clearCache();
         KnowledgeBaseLoader.clearCache(PLUGIN_DATA_PATH);
 
-        // Reprocess everything
+        // 重新处理所有数据
         initialize();
     }
 
     /**
-     * Get statistics about the knowledge base
+     * 获取知识库的统计信息
      */
     public Map<String, Object> getStatistics() {
         Map<String, Object> stats = new HashMap<>();

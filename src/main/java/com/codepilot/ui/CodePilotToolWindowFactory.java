@@ -28,4 +28,3 @@ public class CodePilotToolWindowFactory implements ToolWindowFactory {
         toolWindow.getContentManager().addContent(content);
     }
 }
-

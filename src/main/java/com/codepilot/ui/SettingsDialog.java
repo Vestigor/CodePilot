@@ -20,7 +20,7 @@ public class SettingsDialog extends DialogWrapper {
     public SettingsDialog(Project project) {
         super(project);
         this.configManager = ApplicationManager.getApplication().getService(ConfigManager.class);
-        setTitle("CodePilot 设置");
+        setTitle("CodePilot Settings");
         init();
     }
 
@@ -50,7 +50,7 @@ public class SettingsDialog extends DialogWrapper {
         gbc.gridx = 0;
         gbc.gridy = 1;
         gbc.weightx = 0.3;
-        panel.add(new JLabel("模型:"), gbc);
+        panel.add(new JLabel("Model:"), gbc);
 
         gbc.gridx = 1;
         gbc.weightx = 0.7;
@@ -73,7 +73,7 @@ public class SettingsDialog extends DialogWrapper {
         gbc.gridx = 0;
         gbc.gridy = 2;
         gbc.gridwidth = 2;
-        JLabel noteLabel = new JLabel("<html><i>提示：API Key将被安全保存</i></html>");
+        JLabel noteLabel = new JLabel("<html><i>Your API key will be securely stored</i></html>");
         noteLabel.setForeground(Color.GRAY);
         panel.add(noteLabel, gbc);
 

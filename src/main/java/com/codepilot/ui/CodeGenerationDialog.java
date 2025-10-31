@@ -44,7 +44,7 @@ public class CodeGenerationDialog extends DialogWrapper {
         this.insertionContext = insertionContext;
         this.llmService = LLMService.getInstance(project);
 
-        setTitle("根据描述生成代码");
+        setTitle("Generate Code Based on Description");
         setModal(false);
         init();
     }
@@ -60,13 +60,13 @@ public class CodeGenerationDialog extends DialogWrapper {
         JPanel topPanel = new JPanel(new BorderLayout(5, 5));
 
         JPanel labelPanel = new JPanel(new FlowLayout(FlowLayout.LEFT));
-        labelPanel.add(new JLabel("描述您的需求:"));
+        labelPanel.add(new JLabel("Describe your requirement:"));
 
         // 显示当前上下文
         if (insertionContext.isInsideClass()) {
-            labelPanel.add(new JLabel("（将在类内部生成）"));
+            labelPanel.add(new JLabel(" (Code will be generated inside the class)"));
         } else if (insertionContext.isInsideMethod()) {
-            labelPanel.add(new JLabel("（将在方法内部生成）"));
+            labelPanel.add(new JLabel(" (Code will be generated inside the method)"));
         }
         topPanel.add(labelPanel, BorderLayout.NORTH);
 
@@ -79,19 +79,19 @@ public class CodeGenerationDialog extends DialogWrapper {
 
         // 按钮面板
         JPanel buttonPanel = new JPanel(new FlowLayout(FlowLayout.LEFT));
-        generateButton = new JButton("生成代码");
+        generateButton = new JButton("Generate Code");
         generateButton.addActionListener(e -> generateCode());
         buttonPanel.add(generateButton);
 
-        autoCleanCheckBox = new JCheckBox("自动清理生成的代码", true);
+        autoCleanCheckBox = new JCheckBox("Auto clean generated code", true);
         buttonPanel.add(autoCleanCheckBox);
 
         topPanel.add(buttonPanel, BorderLayout.SOUTH);
         panel.add(topPanel, BorderLayout.NORTH);
 
-        // 中部面板 - 代码预览
+        // 中部面板
         JPanel centerPanel = new JPanel(new BorderLayout(5, 5));
-        centerPanel.add(new JLabel("生成的代码预览:"), BorderLayout.NORTH);
+        centerPanel.add(new JLabel("Generated code preview:"), BorderLayout.NORTH);
 
         codePreviewArea = new JTextArea();
         codePreviewArea.setFont(new Font("Consolas", Font.PLAIN, 12));
@@ -100,7 +100,7 @@ public class CodeGenerationDialog extends DialogWrapper {
         JScrollPane codeScrollPane = new JScrollPane(codePreviewArea);
         centerPanel.add(codeScrollPane, BorderLayout.CENTER);
 
-        regenerateButton = new JButton("重新生成");
+        regenerateButton = new JButton("Regenerate");
         regenerateButton.setEnabled(false);
         regenerateButton.addActionListener(e -> regenerateCode());
         centerPanel.add(regenerateButton, BorderLayout.SOUTH);
@@ -113,13 +113,13 @@ public class CodeGenerationDialog extends DialogWrapper {
     @Override
     protected Action[] createActions() {
         return new Action[]{
-                new DialogWrapperAction("插入代码") {
+                new DialogWrapperAction("Insert Code") {
                     @Override
                     protected void doAction(java.awt.event.ActionEvent e) {
                         insertCode();
                     }
                 },
-                new DialogWrapperAction("取消") {
+                new DialogWrapperAction("Cancel") {
                     @Override
                     protected void doAction(java.awt.event.ActionEvent e) {
                         doCancelAction();
@@ -131,12 +131,12 @@ public class CodeGenerationDialog extends DialogWrapper {
     private void generateCode() {
         String requirement = requirementArea.getText().trim();
         if (requirement.isEmpty()) {
-            Messages.showWarningDialog(project, "请输入代码生成需求", "警告");
+            Messages.showWarningDialog(project, "Please enter a code generation requirement", "Warning");
             return;
         }
 
         generateButton.setEnabled(false);
-        codePreviewArea.setText("正在生成代码...\n");
+        codePreviewArea.setText("Generating code...\n");
 
         SwingWorker<Void, Void> worker = new SwingWorker<>() {
             @Override
@@ -148,9 +148,9 @@ public class CodeGenerationDialog extends DialogWrapper {
                 // 根据插入位置调整提示
                 String promptName = "code_generation_prompt";
                 if (insertionContext.isInsideMethod()) {
-                    variables.put("requirement", requirement + " (在方法内部生成语句)");
+                    variables.put("requirement", requirement + " (Code will be generated inside the method)");
                 } else if (insertionContext.isInsideClass()) {
-                    variables.put("requirement", requirement + " (在类内部生成方法或字段)");
+                    variables.put("requirement", requirement + " (Code will be generated as a method or field inside the class)");
                 }
 
                 String prompt = PromptLoader.formatPrompt(promptName, variables);
@@ -199,7 +199,7 @@ public class CodeGenerationDialog extends DialogWrapper {
 
     private void insertCode() {
         if (generatedCode.isEmpty()) {
-            Messages.showWarningDialog(project, "没有可插入的代码", "警告");
+            Messages.showWarningDialog(project, "No code to insert", "Warning");
             return;
         }
 
@@ -207,8 +207,8 @@ public class CodeGenerationDialog extends DialogWrapper {
         if (!CodeCleanupUtil.isValidForInsertion(generatedCode, insertionContext)) {
             int result = Messages.showYesNoDialog(
                     project,
-                    "生成的代码可能不适合当前插入位置。是否仍要插入？",
-                    "警告",
+                    "The generated code might not be suitable for the current insertion position. Do you still want to insert it?",
+                    "Warning",
                     Messages.getWarningIcon()
             );
 

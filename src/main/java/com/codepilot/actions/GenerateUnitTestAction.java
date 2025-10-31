@@ -23,6 +23,9 @@ import org.jetbrains.annotations.NotNull;
 import java.util.HashMap;
 import java.util.Map;
 
+/**
+ * 自动生成单元测试的动作类
+ */
 public class GenerateUnitTestAction extends AnAction {
 
     @Override
@@ -40,22 +43,26 @@ public class GenerateUnitTestAction extends AnAction {
         Editor editor = e.getData(CommonDataKeys.EDITOR);
         PsiFile psiFile = e.getData(CommonDataKeys.PSI_FILE);
 
+        // 检查编辑器和文件是否有效
         if (editor == null || psiFile == null) {
             return;
         }
 
+        // 获取光标所在位置的元素
         PsiElement element = psiFile.findElementAt(editor.getCaretModel().getOffset());
         PsiClass psiClass = PsiTreeUtil.getParentOfType(element, PsiClass.class);
 
+        // 如果光标不在类或方法内，提示用户
         if (psiClass == null) {
-            Messages.showWarningDialog(project, "请将光标放在类或方法内", "提示");
+            Messages.showWarningDialog(project, "Please place the cursor inside a class or method", "Hint");
             return;
         }
 
+        // 获取用户输入的测试需求或场景
         String requirement = Messages.showInputDialog(
                 project,
-                "请描述测试场景或需求（例如：测试空值情况、边界条件等）：",
-                "生成单元测试",
+                "Describe the test scenario or requirement (e.g., test for null values, boundary conditions, etc.):",
+                "Generate Unit Test",
                 Messages.getQuestionIcon()
         );
 
@@ -66,75 +73,88 @@ public class GenerateUnitTestAction extends AnAction {
         String sourceCode = psiClass.getText();
         String className = psiClass.getName();
 
-        ProgressManager.getInstance().run(new Task.Backgroundable(project, "生成单元测试", false) {
+        ProgressManager.getInstance().run(new Task.Backgroundable(project, "Generating Unit Test", false) {
             @Override
             public void run(@NotNull ProgressIndicator indicator) {
-                indicator.setText("正在生成测试代码...");
+                indicator.setText("Generating test code...");
 
+                // 获取 LLM 服务实例
                 LLMService llmService = LLMService.getInstance(project);
 
+                // 构建传递给 LLM 的变量
                 Map<String, String> variables = new HashMap<>();
                 variables.put("code", sourceCode);
                 variables.put("requirement", requirement);
                 variables.put("className", className);
 
+                // 格式化生成的提示模板
                 String prompt = PromptLoader.formatPrompt("test_generation_prompt", variables);
                 String rawTestCode = llmService.generateResponse(prompt);
 
                 // 清理生成的测试代码
-                String testCode = CodeCleanupUtil.cleanTestCode(rawTestCode, className);
+                // String testCode = CodeCleanupUtil.cleanTestCode(rawTestCode, className);
 
+                // 在应用程序的事件调度线程中创建测试文件
                 ApplicationManager.getApplication().invokeLater(() -> {
-                    createTestFile(project, psiFile, className, testCode);
+                    createTestFile(project, psiFile, className, rawTestCode);
                 });
             }
         });
     }
 
+    /**
+     * 创建测试文件并将其添加到源代码所在目录
+     */
     private void createTestFile(Project project, PsiFile sourceFile,
                                 String className, String testCode) {
-        WriteCommandAction.runWriteCommandAction(project, () -> {
-            try {
-                PsiDirectory directory = sourceFile.getContainingDirectory();
-                if (directory == null) {
-                    return;
+        try {
+            PsiDirectory directory = sourceFile.getContainingDirectory();
+            if (directory == null) {
+                return;
+            }
+
+            String testFileName = className + "Test.java";
+
+            // 在 write action 之前检查文件并询问用户
+            PsiFile existingFile = directory.findFile(testFileName);
+            if (existingFile != null) {
+                int result = Messages.showYesNoDialog(
+                        project,
+                        "Test file already exists. Do you want to overwrite it?",
+                        "Confirm",
+                        Messages.getQuestionIcon()
+                );
+                if (result != Messages.YES) {
+                    return; // 用户选择不覆盖，直接返回
                 }
+            }
 
-                String testFileName = className + "Test.java";
-
-                PsiFile existingFile = directory.findFile(testFileName);
+            WriteCommandAction.runWriteCommandAction(project, () -> {
+                // 删除已存在的文件
                 if (existingFile != null) {
-                    int result = Messages.showYesNoDialog(
-                            project,
-                            "测试文件已存在，是否覆盖？",
-                            "确认",
-                            Messages.getQuestionIcon()
-                    );
-                    if (result == Messages.YES) {
-                        existingFile.delete();
-                    } else {
-                        return;
-                    }
+                    existingFile.delete();
                 }
 
+                // 创建新的测试文件并添加到目录中
                 PsiFile testFile = PsiFileFactory.getInstance(project)
                         .createFileFromText(testFileName, JavaFileType.INSTANCE, testCode);
 
                 directory.add(testFile);
+            });
 
-                Messages.showInfoMessage(
-                        project,
-                        "测试类已成功创建：" + testFileName,
-                        "成功"
-                );
-            } catch (Exception ex) {
-                Messages.showErrorDialog(
-                        project,
-                        "创建测试文件失败：" + ex.getMessage(),
-                        "错误"
-                );
-            }
-        });
+            Messages.showInfoMessage(
+                    project,
+                    "Test class has been successfully created: " + testFileName,
+                    "Success"
+            );
+
+        } catch (Exception ex) {
+            Messages.showErrorDialog(
+                    project,
+                    "Failed to create test file: " + ex.getMessage(),
+                    "Error"
+            );
+        }
     }
 
     @Override
@@ -142,6 +162,7 @@ public class GenerateUnitTestAction extends AnAction {
         Project project = e.getProject();
         PsiFile psiFile = e.getData(CommonDataKeys.PSI_FILE);
 
+        // 确保当前文件是 Java 文件
         boolean isJavaFile = psiFile instanceof PsiJavaFile;
         e.getPresentation().setEnabledAndVisible(project != null && isJavaFile);
     }
